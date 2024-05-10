@@ -1,0 +1,149 @@
+---
+title: "TCGA_SKCM_DATAPREP"
+author: "Arda Askin"
+date: "2024-03-11"
+output: html_document
+---
+
+#loading packages
+
+```{r}
+library(TCGAbiolinks)
+
+library(SummarizedExperiment)
+
+library(dplyr)
+```
+
+
+
+```{r}
+
+skcm_rna <- readRDS("SKCM_rnaseq.rds")
+
+gene_data <- as.data.frame(rowData(skcm_rna))
+
+gene_data  <- gene_data %>% 
+  mutate(duplicated_name = duplicated(gene_name) | duplicated(gene_name, fromLast=T)) %>% 
+  mutate(new_name = case_when(
+    duplicated_name == TRUE ~ paste(gene_name, gene_id, sep = "_"),
+    duplicated_name == FALSE ~ gene_name,
+    TRUE ~ "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+  )) %>% 
+  mutate(new_name= make.names(new_name))
+
+```
+
+```{r}
+rna_data <- assay(skcm_rna)
+
+rownames(rna_data) <- gene_data$new_name
+
+rna_data <- as.data.frame(t(rna_data))
+
+rna_data <- rna_data %>% 
+    mutate(sample_id = substr(rownames(.), 1,16 ))%>% 
+       select(sample_id, everything())
+
+# saveRDS(rna_data, "TCGA_SKCM_row_count.rds")
+# 
+# rna_data <- readRDS("TCGA_SKCM_row_count.rds")
+
+rna_data <- rna_data %>% 
+    mutate(meta.patient = substr(sample_id, 1,12 ))%>% 
+       select(meta.patient, everything())
+
+rna_data <- rna_data %>% filter(!duplicated(rna_data$meta.patient))
+
+```
+
+#meta data
+
+```{r}
+library(data.table)
+
+panimm <- readxl::read_xlsx("NIHMS958212-supplement-2.xlsx", na = "NA")
+
+colnames(panimm)[1] <- "patient"
+colnames(panimm) <- gsub("\\-| ", ".", colnames(panimm))
+colnames(panimm) <- paste0("meta.", colnames(panimm))
+colnames(panimm) <- tolower(colnames(panimm))
+panimm <- as.data.table(panimm)
+
+skcm_meta <- panimm[meta.tcga.study == "SKCM", ]
+
+```
+
+
+#merging
+
+```{r}
+
+skcm_merged <- inner_join(rna_data, skcm_meta, by = "meta.patient")
+
+```
+
+
+#lymphocyte.infiltration.signature.score classification 
+
+```{r}
+
+# lymph_inf_median <- median(skcm_merged[["meta.lymphocyte.infiltration.signature.score"]], na.rm = T)
+
+skcm_merged <- skcm_merged %>% mutate(
+  
+  meta.lymph.inf.sign = case_when(
+    
+                   meta.lymphocyte.infiltration.signature.score > 0 ~ "High",
+    
+                        meta.lymphocyte.infiltration.signature.score <= 0 ~ "Low"
+    
+  )  
+  
+)
+
+skcm_merged$meta.lymph.inf.sign <- as.factor(skcm_merged$meta.lymph.inf.sign)
+
+skcm_merged <- skcm_merged[!duplicated(skcm_merged$meta.patient)]
+
+rownames(skcm_merged) <- make.unique(skcm_merged$meta.patient)
+
+skcm_merged <- skcm_merged %>% select(-c("meta.patient", "sample_id"))
+
+saveRDS(skcm_merged, "tcga_skcm.RDS")
+
+```
+
+```{r}
+tcga_skcm <- readRDS("tcga_skcm.rds")
+
+library(moments)
+library(dplyr)
+
+skewness(tcga_skcm$meta.ifn.gamma.response)
+
+shapiro.test(tcga_skcm$meta.ifn.gamma.response)
+
+
+library(readr)
+
+clinic <- read_tsv("clinical_PANCAN_patient_with_followup.tsv")
+
+colnames(clinic)[2] <- "meta.patient"
+
+clinic = as.data.frame(clinic)
+
+skcm_clinic <- filter(clinic, acronym == "SKCM")
+
+skcm_immuno <- skcm_clinic %>% 
+      
+                select(primary_therapy_outcome_success)
+
+skcm_merged_2 <-  merge(skcm_clinic, rna_data, by.x = "meta.patient", by.y = "meta.patient")
+
+
+
+```
+
+
+

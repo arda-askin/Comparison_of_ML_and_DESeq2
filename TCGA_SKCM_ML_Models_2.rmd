@@ -240,8 +240,6 @@ saveRDS(svmRadialWeights_model, "TCGA_SKCM_svmRadialWeights_model_vsd.rds")
 
 #For Test 
 
-test_dat = test[ , colnames(test) != "meta.binary.bin"]
-
 library(pROC)
 
 svm_roc <- roc(test_data$meta.lymph.inf.sign, 
@@ -304,8 +302,6 @@ svmImp_d$genes <- rownames(svmImp_d)
 plot(svmImp, top = 20)
 
 #For Test
-
-test_dat = test[ , colnames(test) != "meta.binary.bin"]
 
 library(pROC)
 
