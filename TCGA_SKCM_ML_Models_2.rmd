@@ -1,0 +1,433 @@
+---
+title: "TCGA_ML_Models"
+author: "Arda Askin"
+date: "2024-03-30"
+output: html_document
+---
+
+```{r}
+train_col_data <- readRDS("TCGA_SKCM_train_col_data.rds")
+
+train_count_data <- readRDS("TCGA_SKCM_train_vsd.rds")
+
+test_col_data <- readRDS("TCGA_SKCM_test_col_data.rds")
+
+test_count_data <- readRDS("TCGA_SKCM_test_vsd.rds")
+
+train_col_data$patients <- row.names(train_col_data)
+
+train_count_data$patients <- row.names(train_count_data)
+
+test_col_data$patients <- row.names(test_col_data)
+
+test_count_data$patients <- row.names(test_count_data)
+
+```
+
+# Merging meta and count data/ extract common genes of test and train data set 
+
+```{r}
+library(dplyr)
+train_data <- inner_join(train_count_data, train_col_data, by="patients")
+train_data <- select(train_data, -patients)
+
+test_data <- inner_join(test_count_data, test_col_data, by="patients")
+test_data <- select(test_data, -patients)
+
+train_data <- select(train_data, intersect(colnames(test_data), colnames(train_data)))
+test_data <- select(test_data, intersect(colnames(test_data), colnames(train_data)))
+
+
+```
+
+
+## xgboost model
+
+```{r}
+library(doParallel)
+
+n_cores <- detectCores()
+n_cores
+
+# Register cluster
+cluster <- makeCluster(n_cores - 1)
+registerDoParallel(cluster)
+
+# stopCluster(cl = cluster)
+
+library(caret)
+
+
+
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        # repeats=3, ## it can be used when performance is poor 
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+
+
+
+dat = train_data[ , colnames(train_data) != "meta.lymph.inf.sign"]
+
+set.seed(50)
+
+xgb_model = train(x = dat, 
+              y = train_data$meta.lymph.inf.sign, 
+              method = "xgbTree", 
+              trControl = control)
+
+
+saveRDS(xgb_model, "TCGA_SKCM_xgb_model_vsd.RDS")
+
+# Model Performance 
+
+# For Train Data Set 
+
+library(MLeval)
+
+x_XGB <- evalm(xgb_model)
+
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+
+xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+
+plot(xgbImp, top = 20, )
+
+
+# For Test Data Set 
+
+library(pROC)
+
+test_dat <- test_data %>% select(-meta.lymph.inf.sign)
+
+xgb_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(xgb_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+xgb_roc
+
+plot(xgb_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+
+# Confusion Matrix 
+
+predicted = predict(xgb_model, test_dat)
+
+xgb_predicted = predict(xgb_model, test_dat)
+
+confusionMatrix(xgb_predicted, test_data$meta.lymph.inf.sign)
+
+
+```
+
+## random forest model
+
+```{r}
+library(caret)
+
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=3,
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+dat = train_data[ , colnames(train_data) != "meta.lymph.inf.sign"]
+
+set.seed(50)
+rf_model <- train(x = dat, 
+              y = train_data$meta.lymph.inf.sign, 
+                   method = 'rf',
+                   metric = 'Accuracy',
+                   tuneLength  = 15, 
+                   trControl = control)
+
+# Model Performance 
+
+# For Train
+
+library(MLeval)
+
+x <- evalm(rf_model)
+
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+rfImp_d <- xgbImp_d %>% filter(!Overall == 0)
+
+rfImp_d$genes <- rownames(rfImp_d)
+
+plot(xgbImp, top = 20, )
+
+intersect(xgbImp_d$genes, rfImp_d$genes)
+
+test_dat <- test_data %>% select(-meta.lymph.inf.sign)
+
+# For Test 
+
+library(pROC)
+
+rf_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(rf_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+rf_roc
+
+plot(rf_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+
+# Confusion Matrix 
+
+rf_predicted = predict(rf_model, test_dat)
+
+confusionMatrix(rf_predicted, test_data$meta.lymph.inf.sign)
+
+
+
+saveRDS(rf_model, "TCGA_SKCM_random_forest_model_vsd.rds")
+
+
+```
+
+# SVM Model
+
+```{r}
+library(caret)
+
+
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        # repeats=3,
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+set.seed(50)
+svmRadialWeights_model <- train(x = dat, 
+                   y = train_data$meta.lymph.inf.sign, 
+                   method = 'svmRadialWeights',
+                   metric = 'Accuracy',
+                   # tuneLength  = 15, # it causes slow process and it can be used when the performance is poor 
+                   trControl = control)
+
+
+# Model Performance
+
+# For Train
+
+library(MLeval)
+
+x_svm <- evalm(svmRadialWeights_model)
+
+
+svmImp <- varImp(svmRadialWeights_model, scale = T)
+svmImp_d <- data.frame(svmImp$importance)
+svmImp_d <- svmImp_d %>% filter(!(NR == 0 & R == 0))
+
+svmImp_d$genes <- rownames(svmImp_d)
+
+readRDS("TCGA_SKCM_svmRadialWeights_model_latest.rds")
+
+plot(svmImp, top = 20)
+
+saveRDS(svmRadialWeights_model, "TCGA_SKCM_svmRadialWeights_model_vsd.rds")
+
+#For Test 
+
+test_dat = test[ , colnames(test) != "meta.binary.bin"]
+
+library(pROC)
+
+svm_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(svmRadialWeights_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+svm_roc
+
+plot(svm_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+#Confusion Matrix
+
+svm_predicted = predict(svmRadialWeights_model, test_dat)
+
+confusionMatrix(svm_predicted, test_data$meta.lymph.inf.sign)
+
+
+```
+
+
+# GLMNET Model
+
+```{r}
+library(caret)
+
+
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        # repeats=3,
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+set.seed(50)
+glmnet_model <- train(x = dat, 
+                   y = train_data$meta.lymph.inf.sign, 
+                   method = 'glmnet',
+                   metric = 'Accuracy',
+                   family = "binomial",
+                   # tuneLength  = 15,
+                   trControl = control)
+
+#Model Performance
+
+# For Test
+
+library(MLeval)
+
+x_glmnet <- evalm(glmnet_model)
+
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+
+svmImp_d$genes <- rownames(svmImp_d)
+
+
+plot(svmImp, top = 20)
+
+#For Test
+
+test_dat = test[ , colnames(test) != "meta.binary.bin"]
+
+library(pROC)
+
+glmnet_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(glmnet_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+glmnet_roc
+
+plot(glmnet_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+saveRDS(glmnet_model, "TCGA_SKCM_GLMNET_model_vsd.rds")
+
+glmnet_predicted = predict(glmnet_model, test_dat)
+
+confusionMatrix(glmnet_predicted, test_data$meta.lymph.inf.sign)
+
+```
+
+
+## deep learning model with H2O
+
+```{r}
+library(h2o)
+
+h2o.init(nthreads = -1) 
+
+train.hex <- as.h2o(train_data)
+test.hex <- as.h2o(test_data)
+
+```
+
+
+```{r}
+
+hyper_params <- list(
+                     activation = c("Rectifier", "Maxout", "Tanh", "RectifierWithDropout", "MaxoutWithDropout", "TanhWithDropout"), 
+                     hidden = list(c(5, 5, 5, 5, 5), c(10, 10, 10, 10), c(50, 50, 50), c(100, 100, 100)),
+                     epochs = c(50, 100, 200),
+                     l1 = c(0, 0.00001, 0.0001), 
+                     l2 = c(0, 0.00001, 0.0001),
+                     rate = c(0, 01, 0.005, 0.001),
+                     rate_annealing = c(1e-8, 1e-7, 1e-6),
+                     rho = c(0.9, 0.95, 0.99, 0.999),
+                     epsilon = c(1e-10, 1e-8, 1e-6, 1e-4),
+                     momentum_start = c(0, 0.5),
+                     momentum_stable = c(0.99, 0.5, 0),
+                     input_dropout_ratio = c(0, 0.1, 0.2),
+                     max_w2 = c(10, 100, 1000, 3.4028235e+38)
+                     )
+
+
+search_criteria <- list(strategy = "RandomDiscrete", 
+                        max_models = 100,
+                        max_runtime_secs = 900,
+                        stopping_tolerance = 0.001,
+                        stopping_rounds = 15,
+                        seed = 42)
+
+ y = grep("meta.lymph.inf.sign", colnames(test_data))
+  
+ x = 1:(y-1)
+ 
+ dl_grid <- h2o.grid(algorithm = "deeplearning", 
+                    x = x,
+                    y = y,
+                    grid_id = "dl_grid",
+                    training_frame = train.hex,
+                    validation_frame = test.hex,
+                    nfolds = 5,                           
+                    fold_assignment = "Stratified",
+                    hyper_params = hyper_params,
+                    search_criteria = search_criteria,
+                    seed = 42
+                    ,keep_cross_validation_predictions=TRUE
+                    ,keep_cross_validation_fold_assignment=TRUE
+                    ,variable_importances = T
+                    )
+ 
+ 
+
+  gridperf2 <- h2o.getGrid(grid_id = "dl_grid",
+                             sort_by = "auc",
+                             decreasing = TRUE)
+ 
+  print(gridperf2)
+  summary(gridperf2)
+  
+  best_ann <- h2o.getModel(gridperf2@model_ids[[1]])
+  
+  h2o.saveModel(best_ann,"TCGA_SKCM_ann_model_vsd.rds")
+  
+    #"C:\\EKIZ_LAB\\ML_Performance\\Models\\TCGA_SKCM_model\\TCGA_SKCM_ann_model_vsd.rds\\dl_grid_model_1"
+  
+  # variable importance
+  
+  varimp <- h2o.varimp(best_ann)
+  
+  varimp_d <- as.data.frame(varimp)
+  
+  source("h2o_imp_var.R")
+  
+  h2o_imp_var(best_ann)
+  
+  # model performance
+  
+  perf2 <- h2o.performance(best_ann, valid = TRUE)
+ 
+   plot(perf2, type = "roc")
+ 
+  # confusion matrix 
+   
+   a <-as.data.frame(predict(best_ann, test.hex))
+  
+   table(test_data$meta.lymph.inf.sign, a$predict)
+```
+
+
+
+
+
+
+
+
+

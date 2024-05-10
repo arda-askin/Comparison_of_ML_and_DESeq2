@@ -1,0 +1,614 @@
+---
+title: "This is Variable Importance Analysis for Different ML Algoritms"
+author: Arda Askin
+date: "`r Sys.Date()`"   
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true 
+    code_folding: show
+    theme: sandstone
+--- 
+
+TCGA SKCM Data was used to predict lymphocyte infiltration level. lymphocyte inflitration score was binarized as high and low. Before Diff. Exp. Analysis, the data was splitted test (n = 140) and train (n = 329)data sets. DSeq2 normalized data sets were transformed by Tukey's Transformation.(For more information about Tukey's Transformation: https://onlinestatbook.com/2/transformations/tukey.html) After Transformation, deeplearning, svm classifier, xgboost, randomforest and glmnet models were formed.    
+
+# Model Performance 
+
+
+
+```{r, echo=FALSE, , message=FALSE, , warning=FALSE}
+library(dplyr)
+library(caret)
+library(MLeval)
+library(pROC)
+library(h2o)
+
+h2o.init(nthreads = -1) 
+
+```
+
+
+
+```{r, echo=FALSE, , message=FALSE}
+train_col_data <- readRDS("TCGA_SKCM_train_col_data.rds")
+
+train_count_data <- readRDS("TCGA_SKCM_train_vsd.rds")
+
+test_col_data <- readRDS("TCGA_SKCM_test_col_data.rds")
+
+test_count_data <- readRDS("TCGA_SKCM_test_vsd.rds")
+
+train_col_data$patients <- row.names(train_col_data)
+
+train_count_data$patients <- row.names(train_count_data)
+
+test_col_data$patients <- row.names(test_col_data)
+
+test_count_data$patients <- row.names(test_count_data)
+
+```
+
+```{r, echo=FALSE}
+train_data <- inner_join(train_count_data, train_col_data, by="patients")
+train_data <- select(train_data, -patients)
+
+test_data <- inner_join(test_count_data, test_col_data, by="patients")
+test_data <- select(test_data, -patients)
+
+train_data <- select(train_data, intersect(colnames(test_data), colnames(train_data)))
+test_data <- select(test_data, intersect(colnames(test_data), colnames(train_data)))
+
+
+```
+
+
+
+```{r, echo=FALSE}
+xgb_model <- readRDS("TCGA_SKCM_xgb_model_vsd.RDS")
+rf_model<- readRDS("TCGA_SKCM_random_forest_model_vsd.rds")
+svmRadialWeights_model <- readRDS("TCGA_SKCM_svmRadialWeights_model_vsd.rds")
+glmnet_model <- readRDS("TCGA_SKCM_GLMNET_model_vsd.rds")
+
+ann_model_1 <- h2o.loadModel("C:\\EKIZ_LAB\\ML_Performance\\Models\\TCGA_SKCM_model\\TCGA_SKCM_ann_model_vsd.rds\\dl_grid_model_1")
+
+
+## diff expr.
+
+train_diff_genes <- readRDS("TCGA_SKCM_train_de_genes.rds")
+test_diff_genes <- readRDS("TCGA_SKCM_test_de_genes.rds")
+
+
+```
+
+## Performance Analysis 
+
+### XGBOOST
+
+```{r}
+
+# eval metrics of train data
+
+x_XGB <- evalm(xgb_model)
+
+
+test_dat <- test_data %>% select(-meta.lymph.inf.sign)
+
+xgb_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(xgb_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+
+plot(xgb_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+xgb_predicted = predict(xgb_model, test_dat)
+
+confusionMatrix(xgb_predicted, test_data$meta.lymph.inf.sign)
+
+```
+
+### Random Forest
+
+```{r}
+x_rf <- evalm(rf_model)
+
+test_dat <- test_data %>% select(-meta.lymph.inf.sign)
+
+library(pROC)
+
+rf_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(rf_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+
+plot(rf_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+rf_predicted = predict(rf_model, test_dat)
+
+confusionMatrix(rf_predicted, test_data$meta.lymph.inf.sign)
+
+xgb_predicted = predict(xgb_model, test_dat)
+
+confusionMatrix(xgb_predicted, test_data$meta.lymph.inf.sign)
+
+```
+
+### GLMNET
+
+```{r}
+
+x_glmnet <- evalm(glmnet_model)
+
+glmnet_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(glmnet_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+
+plot(glmnet_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+glmnet_predicted = predict(glmnet_model, test_dat)
+
+confusionMatrix(glmnet_predicted, test_data$meta.lymph.inf.sign)
+
+```
+
+### SVM Classifier
+
+```{r}
+x_svm <- evalm(svmRadialWeights_model)
+
+svm_roc <- roc(test_data$meta.lymph.inf.sign, 
+            predict(svmRadialWeights_model, test_dat, type = "prob")[,1], 
+            levels = rev(levels(test_data$meta.lymph.inf.sign)))
+
+plot(svm_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+svm_predicted = predict(svmRadialWeights_model, test_dat)
+
+confusionMatrix(svm_predicted, test_data$meta.lymph.inf.sign)
+
+
+```
+
+### Deep Learning 
+
+```{r}
+perf_1_cross <- h2o.performance(ann_model_1,  xval = TRUE)
+ 
+plot(perf_1_cross, type = "roc")
+
+perf_1_train <- h2o.performance(ann_model_1,  valid = TRUE)
+ 
+plot(perf_1_train, type = "roc")
+
+```
+
+
+# Variable Importance
+
+### XGBOOST
+
+```{r}
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+xgbImp_d$genes <- row.names(xgbImp_d)
+
+plot(xgbImp, top = 20, )
+
+```
+
+
+### Random Forest
+
+```{r}
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+rfImp_d <- rfImp_d  %>% filter(!Overall == 0)
+rfImp_d$genes <- rownames(rfImp_d)
+
+plot(rfImp, top = 20, )
+
+```
+
+
+### GLMNET
+
+```{r}
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+glmnetImp_d$genes <- rownames(glmnetImp_d)
+
+plot(glmnetImp, top = 20, )
+
+```
+
+
+### SVM Classifier
+
+```{r}
+
+svmImp <- varImp(svmRadialWeights_model, scale = T)
+svmImp_d <- data.frame(svmImp$importance)
+svmImp_d <- svmImp_d %>% filter(!(High == 0 & Low == 0))
+svmImp_d$genes <- rownames(svmImp_d)
+
+
+plot(svmImp, top = 20, )
+
+```
+
+
+### Deep Learning 
+
+```{r}
+
+source("h2o_imp_var.r")
+
+ann_varimp_1 <- h2o.varimp(ann_model_1)
+ann_varimp_1_d <- as.data.frame(ann_varimp_1)
+
+
+h2o_imp_var(ann_model_1)
+
+
+
+```
+
+
+
+```{r}
+
+## diff expr.
+
+library(dplyr)
+
+train_diff_high_up <- filter(train_diff_genes, log2FoldChange > 0 )
+train_diff_high_down <- filter(train_diff_genes, !log2FoldChange > 0 )
+
+test_diff_high_up <- filter(test_diff_genes, log2FoldChange > 0 )
+test_diff_high_down <- filter(test_diff_genes, !log2FoldChange > 0 )
+
+```
+
+# Variable Importance Analysis
+
+## Finding common important variables 
+
+```{r}
+ann_10 <- top_n(ann_varimp_1,round(nrow(ann_varimp_1)*0.1),relative_mportance)
+svm_10 <- top_n(svmImp_d,round(nrow(svmImp_d)*0.1),High)
+
+relative_ann <- ann_varimp_1_d %>% dplyr::filter(relative_mportance > median(relative_mportance))
+relative_svm <- svmImp_d %>% dplyr::filter(High > median(High))
+
+gene_list_up <- list(
+  ann_10 = ann_10$variable,
+  svm_10 = svm_10$genes, 
+  train_diff_high_up = train_diff_high_up$gene,
+  test_diff_high_up = test_diff_high_up$gene,
+  # xgb = xgbImp_d$genes,
+  rf = rfImp_d$genes
+  # glmnet = glmnetImp_d$genes
+)
+
+
+library(UpSetR)
+
+upset(fromList(gene_list_up), order.by = "freq")
+
+common_elements_up <- Reduce(intersect, gene_list_up)
+common_elements_up
+
+
+gene_list_up_med <- list(
+  relative_ann = relative_ann$variable,
+  relative_svm = relative_svm$genes,
+  train_diff_high_up = train_diff_high_up$gene,
+  test_diff_high_up = test_diff_high_up$gene,
+  # xgb = xgbImp_d$genes,
+  rf = rfImp_d$genes
+  # glmnet = glmnetImp_d$genes
+)
+
+
+upset(fromList(gene_list_up_med), order.by = "freq")
+
+common_elements_up_med <- Reduce(intersect, gene_list_up_med)
+common_elements_up_med
+
+gene_list_down_med <- list(
+  relative_ann = relative_ann$variable,
+  relative_svm = relative_svm$genes,
+  train_diff_high_down = train_diff_high_down$gene,
+  test_diff_high_down = test_diff_high_down$gene,
+  # xgb = xgbImp_d$genes,
+  rf = rfImp_d$genes
+  # glmnet = glmnetImp_d$genes
+)
+
+upset(fromList(gene_list_down_med), order.by = "freq")
+
+common_elements_down_med <- Reduce(intersect, gene_list_down_med)
+common_elements_down_med
+
+gene_list_down <- list(
+  ann_10 = ann_10$variable,
+  svm_10 = svm_10$genes,
+  train_diff_high_down = train_diff_high_down$gene,
+  test_diff_high_down = test_diff_high_down$gene,
+  # xgb = xgbImp_d$genes,
+  rf = rfImp_d$genes
+  # glmnet = glmnetImp_d$genes
+)
+
+upset(fromList(gene_list_down), order.by = "freq")
+
+common_elements_down <- Reduce(intersect, gene_list_down)
+common_elements_down
+
+library(biomaRt)
+ 
+mart <- useEnsembl("genes")
+ 
+human <- useDataset("hsapiens_gene_ensembl", mart)
+ 
+human_genes <- getBM(mart = human, attributes = c("hgnc_symbol", "external_gene_name", "gene_biotype"))
+ 
+all_lncrna <- human_genes %>% dplyr::filter(gene_biotype =="lncRNA")
+
+library("stringr") 
+
+all_lncrna$gene_symb <- all_lncrna$external_gene_name
+
+all_lncrna$external_gene_name <- str_replace_all( all_lncrna$external_gene_name,"-", ".")
+
+
+linc_genes_high_up <- all_lncrna %>% dplyr::filter(external_gene_name %in% common_elements_up )
+linc_genes_high_up_med <- all_lncrna %>% dplyr::filter(external_gene_name %in% common_elements_up_med )
+linc_genes_high_down_med <- all_lncrna %>% dplyr::filter(external_gene_name %in% common_elements_down_med)
+
+linc_genes_high_down<- all_lncrna %>% dplyr::filter(external_gene_name %in% common_elements_down)
+
+linc_genes_train_down <- all_lncrna %>%dplyr::filter(external_gene_name %in% train_diff_high_down$gene)
+linc_genes_test_down <- all_lncrna %>%dplyr::filter(external_gene_name %in% test_diff_high_down$gene)
+
+linc_genes_train_up <- all_lncrna %>%dplyr::filter(external_gene_name %in% train_diff_high_up$gene)
+linc_genes_test_up <- all_lncrna %>%dplyr::filter(external_gene_name %in% test_diff_high_up$gene)
+
+
+```
+
+
+```{r}
+
+ann_10l <- top_n(ann_varimp_1,-round(nrow(ann_varimp_1)*0.1),relative_mportance)
+svm_10l <- top_n(svmImp_d,-round(nrow(svmImp_d)*0.1),High)
+
+gene_list_down_l <- list(
+  ann_10l = ann_10l$variable,
+  svm_10l = svm_10l$genes,
+  train_diff_high_down = train_diff_high_down$gene,
+  test_diff_high_down = test_diff_high_down$gene,
+  rf = rfImp_d$genes
+)
+
+common_elements_down_l <- Reduce(intersect, gene_list_down_l)
+common_elements_down_l
+
+linc_genes_high_down_l<- all_lncrna %>% dplyr::filter(external_gene_name %in% common_elements_down_l)
+
+relative_annl <- ann_varimp_1_d %>% dplyr::filter(relative_mportance < median(relative_mportance))
+
+relative_svml <- svmImp_d %>% dplyr::filter(High < median(High))
+
+gene_list_down_med_l <- list(
+  relative_annl = relative_annl$variable,
+  relative_svml = relative_svml$genes,
+  train_diff_high_down = train_diff_high_down$gene,
+  test_diff_high_down = test_diff_high_down$gene,
+  rf = rfImp_d$genes
+)
+
+upset(fromList(gene_list_down_med), order.by = "freq")
+
+common_elements_down_medl <- Reduce(intersect, gene_list_down_med_l)
+common_elements_down_medl
+
+linc_genes_high_down_medl <- all_lncrna %>% dplyr::filter(external_gene_name %in% common_elements_down_medl)
+
+```
+
+
+
+## Examine the genes on TCGA SKCM Test Dataset 
+
+```{r}
+
+library(ggplot2)
+library(ggpubr)
+
+
+
+gene1 <-  "SPOCK2" 
+
+ggboxplot(test_data, x = "meta.lymph.inf.sign", y = gene1,
+                color = "meta.lymph.inf.sign", palette = "jco",
+                add = "jitter", shape = "meta.lymph.inf.sign")+ 
+            stat_compare_means(method = "t.test")
+
+
+
+plot_list <- list()
+
+for (i in 1:length(common_elements)) {
+  
+gene <-  common_elements[i] 
+
+p <- ggboxplot(test_data, x = "meta.lymph.inf.sign", y = gene,
+                color = "meta.lymph.inf.sign", palette = "jco",
+                add = "jitter", shape = "meta.lymph.inf.sign")+ 
+            stat_compare_means(method = "t.test")
+
+plot_list[[i]] = p
+  
+  
+}
+
+plot_list
+
+
+```
+
+
+## Examine the genes on all-icb data set  
+
+
+```{r}
+
+
+external_data <- readRDS("all_icb.rds")
+
+external_data <- external_data %>% filter(!is.na(external_data$meta.Response.y))
+
+external_data <- external_data %>% 
+  filter(meta.Response.y== "Partial Response" | meta.Response.y == "Complete Response"|meta.Response.y == "Progressive Disease") %>% 
+  
+  mutate(meta.immunotherapy.response = case_when(
+    meta.Response.y == "Partial Response" |
+    meta.Response.y == "Complete Response" ~ "R",
+    meta.Response.y == "Progressive Disease" ~ "NR",
+    
+  ))
+
+colnames(external_data) <- gsub("-", ".", colnames(external_data))
+
+common_elements <- linc_genes_high_up_med$external_gene_name[-7]
+
+
+# for all cancer type
+
+plot_list <- list()
+
+for (i in 1:length(common_elements)) {
+  
+gene <-  common_elements[i] 
+
+p <- ggboxplot(external_data, x = "meta.immunotherapy.response", y = gene,
+                color = "meta.immunotherapy.response", palette = "jco",
+                add = "jitter", shape = "meta.immunotherapy.response")+ 
+            stat_compare_means(method = "t.test")
+
+p <- facet(p, facet.by = "meta.Timepoint")
+
+plot_list[[i]] = p
+  
+  
+}
+
+plot_list
+
+# for melanoma
+
+
+external_data_melanoma <- external_data %>% filter(meta.Cancer_Tissue.y == "Skin")
+
+plot_list_2 <- list()
+
+for (i in 1:length(common_elements)) {
+  
+gene <-  common_elements[i] 
+
+p <- ggboxplot(external_data_melanoma, x = "meta.immunotherapy.response", y = gene,
+                color = "meta.immunotherapy.response", palette = "jco",
+                add = "jitter", shape = "meta.immunotherapy.response")+ 
+            stat_compare_means(method = "t.test")
+
+p <- facet(p, facet.by = "meta.Timepoint")
+
+plot_list_2[[i]] = p
+  
+  
+}
+
+plot_list_2
+
+
+
+
+```
+
+
+## examine importance score relationship
+
+```{r}
+
+xgb_vs_test_diff <- inner_join(xgbImp_d, test_diff_genes, by ="genes")
+
+xgb_vs_train_diff <- inner_join(xgbImp_d, train_diff_genes, by = "genes")
+
+xgb_vs_rf <- inner_join(xgbImp_d, rfImp_d, by = "genes")
+
+xgb_vs_glmnet <- inner_join(xgbImp_d, glmnetImp_d, by= "genes")
+
+xgb_vs_svm <- inner_join(xgbImp_d, svmImp_d, by= "genes")
+
+rf_vs_test_diff <- inner_join(rfImp_d, test_diff_genes, by ="genes")
+
+rf_vs_train_diff <- inner_join(rfImp_d, train_diff_genes, by = "genes")
+
+rf_vs_glmnet <- inner_join(rfImp_d, glmnetImp_d, by= "genes")
+
+rf_vs_svm <- inner_join(rfImp_d, svmImp_d, by= "genes")
+
+glmnet_vs_test_diff <- inner_join(glmnetImp_d, test_diff_genes, by ="genes")
+
+glmnet_vs_train_diff <- inner_join(glmnetImp_d, train_diff_genes, by = "genes")
+
+glmnet_vs_svm <- inner_join(glmnetImp_d, svmImp_d, by= "genes")
+
+
+```
+
+
+```{r}
+library(ggpubr)
+
+df <- glmnet_vs_svm
+
+x <- "Overall"
+
+y <- "High"
+
+xlab <- "glmnet_score"
+
+
+ylab <- "svm_score"
+
+title <- "glmnet_vs_svm"
+
+ggscatter(df, x = x, y = y,
+          add = "reg.line",                                 
+          conf.int = FALSE, 
+          # label = df$genes, 
+          xlab = xlab,
+          ylab = ylab,
+          # repel = TRUE,
+          title = title,
+          add.params = list(color = "blue",
+                            fill = "lightgray")
+          )+
+  stat_cor(method = "pearson", color = "red", label.x = 50, label.y = 50)  
+
+
+
+
+
+```
+

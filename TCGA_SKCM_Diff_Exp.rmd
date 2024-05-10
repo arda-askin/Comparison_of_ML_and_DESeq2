@@ -1,0 +1,189 @@
+---
+title: "ML_analysis_with_TCGA_SKCM"
+author: "Arda Askin"
+date: "2024-03-29"
+output: html_document
+---
+
+# data loading
+
+```{r}
+tcga_skcm <- readRDS("tcga_skcm.rds")
+```
+
+# data splitting
+
+```{r}
+
+imn_data <- tcga_skcm
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(imn_data$meta.lymph.inf.sign, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+row_train <- imn_data[ trainIndex,]
+
+row_test <- imn_data[-trainIndex,]
+
+summary(row_train$meta.lymph.inf.sign)
+
+summary(row_test$meta.lymph.inf.sign)
+
+```
+
+# diff_exp for train set
+
+```{r}
+
+library(DESeq2)
+library(dplyr)
+
+train_count <- row_train %>% select(!starts_with("meta."))
+
+train_count <- as.data.frame(t(train_count))
+
+train_col_data <- select(row_train, meta.lymph.inf.sign)
+
+train_dds <- DESeqDataSetFromMatrix(countData = round(train_count),
+                              colData = train_col_data,
+                              design= ~ meta.lymph.inf.sign)
+
+levels(train_dds$meta.lymph.inf.sign)
+
+train_dds$meta.lymph.inf.sign <- factor(train_dds$meta.lymph.inf.sign, levels = c("Low","High"))
+
+train_smallestGroupSize <- min(summary(row_train$meta.lymph.inf.sign))
+train_keep <- rowSums(counts(train_dds) >= 10) >= train_smallestGroupSize
+
+train_dds <- train_dds[train_keep,]
+
+train_dds <- DESeq(train_dds)
+
+resultsNames(train_dds)
+
+train_res <-results(train_dds, name="meta.lymph.inf.sign_High_vs_Low")
+
+train_res_ordered <- train_res[order(train_res$padj), ]
+
+train_diff_genes <- as.data.frame(train_res_ordered)
+
+train_diff_genes <-  train_diff_genes %>%  filter(padj < 0.05) 
+
+train_resLFC <- lfcShrink(train_dds, 
+                    coef= "meta.lymph.inf.sign_High_vs_Low", 
+                    type = "apeglm")
+
+train_resLFC 
+
+train_resLFC_df <- train_resLFC %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column("gene")
+
+train_de_genes <- train_resLFC_df %>% 
+  filter(padj < 0.05) 
+
+saveRDS(train_diff_genes, "TCGA_SKCM_train_diff_genes_latest.rds")
+saveRDS(train_de_genes, "TCGA_SKCM_train_de_genes.rds")
+
+train_counts <- counts(train_dds_final, normalized = TRUE)
+
+train_counts <- as.data.frame(t(train_counts))
+
+saveRDS(train_counts, "TCGA_SKCM_train_normalized.rds")
+
+saveRDS(train_col_data, "TCGA_SKCM_train_col_data.rds")
+
+```
+
+```{r}
+train_vsd <- vst(train_dds, blind=FALSE)
+
+train_vsd <- assay(train_vsd)
+
+train_vsd <- as.data.frame(t(train_vsd))
+
+saveRDS(train_vsd, "TCGA_SKCM_train_vsd.rds")
+```
+
+
+
+# diff_exp for test set 
+
+```{r}
+library(dplyr)
+
+test_count <- row_test %>% select(!starts_with("meta."))
+
+test_count <- as.data.frame(t(test_count))
+
+test_col_data <- select(row_test, meta.lymph.inf.sign)
+
+test_dds <- DESeqDataSetFromMatrix(countData = round(test_count),
+                              colData = test_col_data,
+                              design= ~ meta.lymph.inf.sign)
+
+levels(test_dds$meta.lymph.inf.sign)
+
+test_dds$meta.lymph.inf.sign <- factor(test_dds$meta.lymph.inf.sign, levels = c("Low","High"))
+
+test_smallestGroupSize <- min(summary(row_test$meta.lymph.inf.sign))
+test_keep <- rowSums(counts(test_dds) >= 10) >= test_smallestGroupSize
+
+test_dds <- test_dds[test_keep,]
+
+test_dds <- DESeq(test_dds)
+
+resultsNames(test_dds)
+
+test_res <-results(test_dds, name="meta.lymph.inf.sign_High_vs_Low")
+
+test_res_ordered <- test_res[order(test_res$padj), ]
+
+test_diff_genes <- as.data.frame(test_res_ordered)
+
+test_diff_genes <- test_diff_genes %>% 
+  filter(padj < 0.05) %>% 
+  filter(log2FoldChange > 3 | log2FoldChange < -3)
+
+test_resLFC <- lfcShrink(test_dds, 
+                    coef=  "meta.lymph.inf.sign_High_vs_Low", 
+                    type = "apeglm")
+test_resLFC
+
+test_resLFC_df <- test_resLFC %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column("gene")
+
+test_de_genes <- test_resLFC_df %>% 
+  filter(padj < 0.05) 
+
+
+saveRDS(test_diff_genes, "TCGA_SKCM_test_diff_genes_latest.rds")
+saveRDS(test_de_genes, "TCGA_SKCM_test_de_genes.rds")
+
+test_counts <- counts(test_dds_final, normalized = TRUE)
+
+test_counts <- as.data.frame(t(test_counts))
+
+saveRDS(test_counts, "TCGA_SKCM_test_normalized.rds")
+
+saveRDS(test_col_data, "TCGA_SKCM_test_col_data.rds")
+
+```
+
+
+```{r}
+test_vsd <- vst(test_dds, blind=FALSE)
+
+test_vsd <- assay(test_vsd)
+
+test_vsd <- as.data.frame(t(test_vsd))
+
+saveRDS(test_vsd, "TCGA_SKCM_test_vsd.rds")
+
+```
+
