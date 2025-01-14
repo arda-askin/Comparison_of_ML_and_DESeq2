@@ -1,0 +1,971 @@
+---
+title: "Noise_Analysis"
+author: Arda Askin
+date: "`r Sys.Date()`"   
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    theme: sandstone
+--- 
+
+# package loading
+
+```{r, echo=FALSE, , message=FALSE, , warning=FALSE}
+library(dplyr)
+library(caret)
+library(MLeval)
+library(pROC)
+library(h2o)
+library(edgeR)
+library(pROC)
+
+h2o.init(nthreads = -1) 
+
+```
+
+
+# XGBoost Models
+
+```{r}
+xgb_n <- readRDS("xgb_valid_final.RDS")
+xgb_s <- readRDS("noise_mg_xgb_5.RDS")
+xgb_m <- readRDS("noise_mg_xgb_0.5.RDS")
+xgb_l <- readRDS("noise_mg_xgb_0.05.RDS")
+xgb_xl <- readRDS("noise_mg_xgb_0.005.RDS")
+
+```
+
+# Random Forest Models
+
+```{r}
+rf_n <- readRDS("rf_valid_final.RDS")
+rf_s <- readRDS("noise_mg_rf_5.RDS")
+rf_m <- readRDS("noise_mg_rf_0.5.RDS")
+rf_l <- readRDS("noise_mg_rf_0.05.RDS")
+rf_xl <- readRDS("noise_mg_rf_0.005.RDS")
+
+```
+
+
+# GLMNet Models
+
+```{r}
+glmnet_n <- readRDS("glmnet_valid_final.RDS")
+glmnet_s <- readRDS("noise_mg_glmnet_5.RDS")
+glmnet_m <- readRDS("noise_mg_glmnet_0.5.RDS")
+glmnet_l <- readRDS("noise_mg_glmnet_0.05.RDS")
+glmnet_xl <- readRDS("noise_mg_glmnet_0.005.RDS")
+
+```
+
+
+# Deep Learning Models
+
+```{r}
+dl_n <- h2o.loadModel("C:\\TCGA_SKCM_model\\ann_valid_fi.RDS\\dl_grid_no_model_4")
+dl_s <- h2o.loadModel("C:\\TCGA_SKCM_model\\noise_ifn_ann_5.rds\\dl_grid_5_model_4")
+dl_m <- h2o.loadModel("C:\\TCGA_SKCM_model\\noise_ifn_ann_0.5.rds\\dl_grid_0.5_model_4")
+dl_l <- h2o.loadModel("C:\\TCGA_SKCM_model\\noise_ifn_ann_0.05.rds\\dl_grid_0.05_model_4")
+dl_xl <- h2o.loadModel("C:\\TCGA_SKCM_model\\noise_ifn_ann_0.005.rds\\dl_grid_0.005_model_1")
+
+```
+
+# noise addition function
+
+```{r}
+require(dplyr)
+
+noise_adder <- function(data, snr) {
+ 
+# browser()
+    
+numeric_col = data %>% select(where(is.numeric))
+   
+col_mean <- data.frame(colmeans = colMeans(numeric_col))  
+  
+col_mean$SNR = abs(col_mean$colmeans / snr)
+
+col_mean$gene <- rownames(col_mean)
+  
+for(i in colnames(data)) {
+
+index = which(col_mean$gene == i)  
+  
+sd = col_mean$SNR[index]  
+  
+if (is.numeric(data[[i]]) == T){
+set.seed(23)
+data[[i]] <- data[[i]] + rnorm(length(data[[i]]), mean = 0, sd = sd) 
+     }
+
+  
+  }
+
+return(data)
+
+} 
+```
+
+
+# Data Prep
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+
+```
+
+```{r}
+
+tr_data_n <- train
+te_data_n <- test
+
+tr_data_s <- noise_adder(train, 5)
+te_data_s <- noise_adder(test, 5)
+
+tr_data_m <- noise_adder(train, 0.5)
+te_data_m <- noise_adder(test, 0.5)
+
+tr_data_l <- noise_adder(train, 0.05)
+te_data_l <- noise_adder(test, 0.05)
+
+tr_data_xl <- noise_adder(train, 0.005)
+te_data_xl <- noise_adder(test, 0.005)
+
+```
+
+
+```{r}
+te_dat_n <- select(te_data_n, -starts_with("meta."))
+te_dat_s <- select(te_data_s, -starts_with("meta."))
+te_dat_m <- select(te_data_m, -starts_with("meta."))
+te_dat_l <- select(te_data_l, -starts_with("meta."))
+te_dat_xl <- select(te_data_xl, -starts_with("meta."))
+
+```
+
+
+
+# AUC-ROC PLOTS
+
+## XGBoost
+
+```{r}
+xgb_roc_n <- roc(te_data_n$meta.multiple.bin, 
+                 predict(xgb_n, te_dat_n, type = "prob")[,1], 
+                 levels = rev(levels(te_data_n$meta.multiple.bin)))
+xgb_roc_s <- roc(te_data_s$meta.multiple.bin, 
+                 predict(xgb_s, te_dat_s, type = "prob")[,1], 
+                 levels = rev(levels(te_data_s$meta.multiple.bin)))
+xgb_roc_m <- roc(te_data_m$meta.multiple.bin, 
+                 predict(xgb_m, te_dat_m, type = "prob")[,1], 
+                 levels = rev(levels(te_data_m$meta.multiple.bin)))
+xgb_roc_l <- roc(te_data_l$meta.multiple.bin, 
+                 predict(xgb_l, te_dat_l, type = "prob")[,1], 
+                 levels = rev(levels(te_data_l$meta.multiple.bin)))
+xgb_roc_xl <- roc(te_data_xl$meta.multiple.bin, 
+                 predict(xgb_xl, te_dat_xl, type = "prob")[,1], 
+                 levels = rev(levels(te_data_xl$meta.multiple.bin)))
+
+
+```
+
+
+
+```{r, fig.width= 4, fig.height=4}
+
+# "#543005" "#8C510A" "#BF812D" "#F6E8C3" "#F5F5F5" "#C7EAE5" "#80CDC1" "#35978F" "#01665E" "#003C30"
+
+labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005")
+
+plot.roc(xgb_roc_n, las=1, lwd=1.7, col = "#E31A1C", xlab=" 1 - specificity")
+
+plot.roc(xgb_roc_s, add=TRUE, lwd=1.7, col =  "#DFC27D")
+
+plot.roc(xgb_roc_m, add=TRUE, lwd=1.7, col = "#1F78B4")
+
+plot.roc(xgb_roc_l, add=TRUE, lwd=1.7, col = "#33A02C")
+
+plot.roc(xgb_roc_xl, add=TRUE, lwd=1.7, col = "#B15928")
+
+
+legend("bottomright", legend = c(paste("[No Noise]", round(auc(xgb_roc_n), 4)), 
+                                 paste("[SNR=5]", round(auc(xgb_roc_s), 4)), 
+                                 paste("[SNR=0.5]", round(auc(xgb_roc_m), 4)),
+                                 paste("[SNR=0.05]", round(auc(xgb_roc_l), 4)), 
+                                 paste("[SNR=0.005]", round(auc(xgb_roc_xl), 4) )), 
+                          lty = c(1, 1, 1, 1), 
+                          col =c("#E31A1C",  "#DFC27D", "#1F78B4", "#33A02C", "#B15928"), cex=0.6, lwd=3, inset = 0.05,
+                                  title = "AUC")
+                          par(mfrow = c(1, 1))
+
+
+                          
+
+```
+
+## Random Forest
+
+```{r}
+rf_roc_n <- roc(te_data_n$meta.multiple.bin, 
+                 predict(rf_n, te_dat_n, type = "prob")[,1], 
+                 levels = rev(levels(te_data_n$meta.multiple.bin)))
+rf_roc_s <- roc(te_data_s$meta.multiple.bin, 
+                 predict(rf_s, te_dat_s, type = "prob")[,1], 
+                 levels = rev(levels(te_data_s$meta.multiple.bin)))
+rf_roc_m <- roc(te_data_m$meta.multiple.bin, 
+                 predict(rf_m, te_dat_m, type = "prob")[,1], 
+                 levels = rev(levels(te_data_m$meta.multiple.bin)))
+rf_roc_l <- roc(te_data_l$meta.multiple.bin, 
+                 predict(rf_l, te_dat_l, type = "prob")[,1], 
+                 levels = rev(levels(te_data_l$meta.multiple.bin)))
+rf_roc_xl <- roc(te_data_xl$meta.multiple.bin, 
+                 predict(rf_xl, te_dat_xl, type = "prob")[,1], 
+                 levels = rev(levels(te_data_xl$meta.multiple.bin)))
+
+
+```
+
+
+
+```{r, fig.width= 4, fig.height=4}
+
+plot.roc(rf_roc_s, las=1, lwd=1.7, col = "#E31A1C", xlab=" 1 - specificity")
+
+plot.roc(rf_roc_s, add=TRUE, lwd=1.7, col = "#DFC27D")
+
+plot.roc(rf_roc_m, add=TRUE, lwd=1.7,  col = "#1F78B4")
+
+plot.roc(rf_roc_l, add=TRUE, lwd=1.7, col = "#33A02C")
+
+plot.roc(rf_roc_xl, add=TRUE, lwd=1.7, col =  "#B15928")
+
+
+legend("bottomright", legend = c(paste("[No Noise]", round(auc(rf_roc_n), 4)), 
+                                 paste("[SNR=5]", round(auc(rf_roc_s), 4)), 
+                                 paste("[SNR=0.5]", round(auc(rf_roc_m), 4)),
+                                 paste("[SNR=0.05]", round(auc(rf_roc_l), 4)), 
+                                 paste("[SNR=0.005]", round(auc(rf_roc_xl), 4) )), 
+                          lty = c(1, 1, 1, 1), 
+                          col =c("#E31A1C", "#DFC27D", "#1F78B4", "#33A02C", "#B15928"), cex=0.6, lwd=3, inset = 0.05,
+                                  title = "AUC")
+                          par(mfrow = c(1, 1))
+
+
+                          
+
+```
+
+## GLMNet
+
+```{r}
+glmnet_roc_n <- roc(te_data_n$meta.multiple.bin, 
+                 predict(glmnet_n, te_dat_n, type = "prob")[,1], 
+                 levels = rev(levels(te_data_n$meta.multiple.bin)))
+glmnet_roc_s <- roc(te_data_s$meta.multiple.bin, 
+                 predict(glmnet_s, te_dat_s, type = "prob")[,1], 
+                 levels = rev(levels(te_data_s$meta.multiple.bin)))
+glmnet_roc_m <- roc(te_data_m$meta.multiple.bin, 
+                 predict(glmnet_m, te_dat_m, type = "prob")[,1], 
+                 levels = rev(levels(te_data_m$meta.multiple.bin)))
+glmnet_roc_l <- roc(te_data_l$meta.multiple.bin, 
+                 predict(glmnet_l, te_dat_l, type = "prob")[,1], 
+                 levels = rev(levels(te_data_l$meta.multiple.bin)))
+glmnet_roc_xl <- roc(te_data_xl$meta.multiple.bin, 
+                 predict(glmnet_xl, te_dat_xl, type = "prob")[,1], 
+                 levels = rev(levels(te_data_xl$meta.multiple.bin)))
+
+
+```
+
+
+```{r, fig.width= 4, fig.height=4}
+
+plot.roc(glmnet_roc_n, las=1, lwd=1.7, col = "#E31A1C", xlab=" 1 - specificity")
+
+plot.roc(glmnet_roc_s, add=TRUE, lwd=1.7, col =  "#DFC27D")
+
+plot.roc(glmnet_roc_m, add=TRUE, lwd=1.7,  col = "#1F78B4")
+
+plot.roc(glmnet_roc_l, add=TRUE, lwd=1.7, col = "#33A02C")
+
+plot.roc(glmnet_roc_xl, add=TRUE, lwd=1.7, col = "#B15928")
+
+
+legend("bottomright", legend = c(paste("[No Noise]", round(auc(glmnet_roc_n), 4)), 
+                                 paste("[SNR=5]", round(auc(glmnet_roc_s), 4)), 
+                                 paste("[SNR=0.5]", round(auc(glmnet_roc_m), 4)),
+                                 paste("[SNR=0.05]", round(auc(glmnet_roc_l), 4)), 
+                                 paste("[SNR=0.005]", round(auc(glmnet_roc_xl), 4) )),  
+                          lty = c(1, 1, 1, 1), 
+                          col =c("#E31A1C",  "#DFC27D", "#1F78B4", "#33A02C", "#B15928"), cex=0.6, lwd=3, inset = 0.05,
+                                  title = "AUC")
+                          par(mfrow = c(1, 1))
+
+
+                          
+
+```
+
+## Deep Learning
+
+```{r}
+#small
+
+test_n.hex <- as.h2o(te_data_n)
+  pred_n <- h2o.predict(dl_n, test_n.hex)
+  predicted_prob_n <- as.data.frame(pred_n)
+  predicted_prob_n <- predicted_prob_n$High
+  true_labels_n <- as.vector(te_data_n$meta.multiple.bin)
+  dl_roc_n <- roc(response = true_labels_n, predictor = predicted_prob_n)
+
+
+
+#small
+
+test_s.hex <- as.h2o(te_data_s)
+  pred_s <- h2o.predict(dl_s, test_s.hex)
+  predicted_prob_s <- as.data.frame(pred_s)
+  predicted_prob_s <- predicted_prob_s$High
+  true_labels_s <- as.vector(te_data_s$meta.multiple.bin)
+  dl_roc_s <- roc(response = true_labels_s, predictor = predicted_prob_s)
+  
+  
+#medium
+
+test_m.hex <- as.h2o(te_data_m)
+  pred_m <- h2o.predict(dl_m, test_m.hex)
+  predicted_prob_m <- as.data.frame(pred_m)
+  predicted_prob_m <- predicted_prob_m$High
+  true_labels_m <- as.vector(te_data_m$meta.multiple.bin)
+  dl_roc_m <- roc(response = true_labels_m, predictor = predicted_prob_m)
+  
+#large
+
+test_l.hex <- as.h2o(te_data_l)
+  pred_l <- h2o.predict(dl_l, test_l.hex)
+  predicted_prob_l <- as.data.frame(pred_l)
+  predicted_prob_l <- predicted_prob_l$High
+  true_labels_l <- as.vector(te_data_l$meta.multiple.bin)
+  dl_roc_l <- roc(response = true_labels_l, predictor = predicted_prob_l)
+  
+#extra large
+
+test_xl.hex <- as.h2o(te_data_xl)
+  pred_xl <- h2o.predict(dl_xl, test_xl.hex)
+  predicted_prob_xl <- as.data.frame(pred_xl)
+  predicted_prob_xl <- predicted_prob_xl$High
+  true_labels_xl <- as.vector(te_data_xl$meta.multiple.bin)
+  dl_roc_xl <- roc(response = true_labels_xl, predictor = predicted_prob_xl)
+
+```
+
+
+
+```{r, fig.width= 4, fig.height=4}
+
+plot.roc(dl_roc_n, las=1, lwd=1.7, col = "#E31A1C", xlab=" 1 - specificity")
+
+plot.roc(dl_roc_s, add=TRUE, lwd=1.7, col =  "#DFC27D")
+
+plot.roc(dl_roc_m, add=TRUE, lwd=1.7,  col = "#1F78B4")
+
+plot.roc(dl_roc_l, add=TRUE, lwd=1.7, col = "#33A02C")
+
+plot.roc(dl_roc_xl, add=TRUE, lwd=1.7, col = "#B15928")
+
+
+legend("bottomright", legend = c(paste("[No Noise]", round(auc(dl_roc_n), 4)), 
+                                 paste("[SNR=5]", round(auc(dl_roc_s), 4)), 
+                                 paste("[SNR=0.5]", round(auc(dl_roc_m), 4)),
+                                 paste("[SNR=0.05]", round(auc(dl_roc_l), 4)), 
+                                 paste("[SNR=0.005]", round(auc(dl_roc_xl), 4) )), 
+                          lty = c(1, 1, 1, 1), 
+                          col =c("#E31A1C", "#DFC27D", "#1F78B4", "#33A02C", "#B15928"), cex=0.6, lwd=3, inset = 0.05,
+                                  title = "AUC")
+                          par(mfrow = c(1, 1))
+
+
+                          
+
+```
+
+# Accuracy Plots
+
+```{r}
+require(caret)
+require(gridExtra)
+require(h2o)
+
+accuracy_table <- function(
+    test_data_n,
+    test_data_s,
+    test_data_m,
+    test_data_l,
+    test_data_xl,
+    condition_n,
+    condition_s,
+    condition_m,
+    condition_l,
+    condition_xl,
+    no,
+    small ,
+    medium,
+    large,
+    xlarge
+){
+  
+  browser()
+  
+  models <- list(
+    no = no,
+    small = small,
+    medium = medium,
+    large = large,
+    extra_large = xlarge
+  )
+  
+  data <- list(
+    test_data_n = test_data_n,
+    test_data_s = test_data_s,
+    test_data_m = test_data_m,
+    test_data_l = test_data_l,
+    test_data_xl = test_data_xl
+  )
+    
+  conditions <- list(
+    condition_n = condition_n,
+    condition_s = condition_s,
+    condition_m = condition_m,
+    condition_l = condition_l,
+    condition_xl = condition_xl
+  )
+  
+  accuracy_results <- data.frame(
+    Model = character(),
+    Accuracy = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  
+  
+  for (model_index in 1 : length(names(models))) {
+   
+     model <- models[[model_index]]
+     
+     test_data <-data[[model_index]]
+     
+     condition <- conditions[[model_index]]
+     
+     test_dat <- test_data[,colnames(test_data) != condition]
+     
+     
+    # Check if the model is an H2O model
+    if (class(model) == "H2OBinomialModel") {
+      # Predict using H2O model
+      predictions <- as.factor(as.vector(h2o.predict(model, as.h2o(test_dat))$predict))
+    } else {
+      # Predict using non-H2O model
+      predictions <- predict(model, test_dat)
+    }
+    
+    # Calculate the confusion matrix and accuracy
+    confusion <- confusionMatrix(predictions, test_data[[condition]])
+    accuracy <- round(confusion$overall['Accuracy'], digits = 3)
+    
+    # Store the results in the data frame
+    accuracy_results <- rbind(accuracy_results, data.frame(
+      Model = names(models)[model_index],
+      Accuracy = accuracy
+    ))
+    
+    rownames(accuracy_results) <- NULL
+  }
+  
+ accuracy_results
+  
+}
+```
+
+
+
+## XGBoost
+
+```{r}
+
+xgb_accu <- accuracy_table(te_data_n,
+                           te_data_s,
+                           te_data_m,
+                           te_data_l,
+                           te_data_xl,
+                           "meta.multiple.bin",
+                           "meta.multiple.bin",
+                           "meta.multiple.bin",
+                           "meta.multiple.bin",
+                           "meta.multiple.bin",
+                          xgb_n,
+                          xgb_s,
+                          xgb_m,
+                          xgb_l,
+                          xgb_xl
+                         )
+
+```
+
+
+```{r, fig.width= 4, fig.height=5}
+palette <- c("#E31A1C", "#DFC27D", "#1F78B4", "#33A02C", "#B15928")
+
+names(palette) <- c("no","small","medium", "large", "extra_large" )
+
+
+library(ggpubr)
+p <- ggbarplot(xgb_accu, x = "Model", y = "Accuracy", width = 0.5, fill = "Model", color = "black",
+ label = TRUE, lab.col = "black", palette = palette, x.text.angle = 45)
+p + theme(legend.position = "none")+
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005"))
+
+```
+
+
+
+
+
+
+## Random Forest
+
+```{r}
+
+rf_accu <- accuracy_table(te_data_n,
+                          te_data_s,
+                          te_data_m,
+                          te_data_l,
+                          te_data_xl,
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          rf_n,
+                          rf_s,
+                          rf_m,
+                          rf_l,
+                          rf_xl
+                         )
+
+
+```
+
+```{r, fig.width= 4, fig.height=5}
+
+library(ggpubr)
+p <- ggbarplot(rf_accu, x = "Model", y = "Accuracy", width = 0.5, fill = "Model", color = "black",
+ label = TRUE, lab.col = "black", palette = palette, x.text.angle = 45, ylim = c(0, 1))
+ # lab.hjust = 1.2, lab.vjust = 0.5)+ 
+
+# coord_flip(ylim = c(0, 1))
+
+p + theme(legend.position = "none")+
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005"))
+
+```
+
+## GlMNet
+
+```{r, fig.width= 4, fig.height=4}
+glmnet_accu <- accuracy_table(
+                          te_data_n,
+                          te_data_s,
+                          te_data_m,
+                          te_data_l,
+                          te_data_xl,
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          glmnet_n,
+                          glmnet_s,
+                          glmnet_m,
+                          glmnet_l,
+                          glmnet_xl
+                         )
+
+```
+
+```{r, fig.width= 4, fig.height=5}
+library(ggpubr)
+p <- ggbarplot(glmnet_accu, x = "Model", y = "Accuracy", width = 0.5, fill = "Model", color = "black",
+ label = TRUE, lab.col = "black", palette = palette, x.text.angle = 45)
+ # , lab.hjust = 1.2, lab.vjust = 0.5)+ coord_flip(ylim = c(0, 1))
+
+ p + theme(legend.position = "none")+
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005"))
+```
+
+## Deep Learning
+
+```{r}
+dl_accu <- accuracy_table(te_data_n,
+                          te_data_s,
+                          te_data_m,
+                          te_data_l,
+                          te_data_xl,
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          "meta.multiple.bin",
+                          dl_n,
+                          dl_s,
+                          dl_m,
+                          dl_l,
+                          dl_xl
+                         )
+
+```
+
+```{r, fig.width= 4, fig.height=4}
+library(ggpubr)
+p <- ggbarplot(dl_accu, x = "Model", y = "Accuracy", width = 0.5, fill = "Model", color = "black",
+ label = TRUE, lab.col = "black", palette = palette, x.text.angle = 45, ylim = c(0,1))
+ # , lab.hjust = 1.2, lab.vjust = 0.5)+ coord_flip(ylim = c(0, 1))
+
+p + theme(legend.position = "none")+
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005"))
+
+```
+
+## Importance Score Plot
+
+
+
+```{r}
+common_cols <- intersect(colnames(l_dat), colnames(mel_dat))
+
+library(msigdbr)
+
+infg_gene_sets = msigdbr(species = "human", category = "H")
+
+infg_gene_sets = infg_gene_sets %>%  filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+sum(duplicated(infg_gene_sets$gene_symbol))
+
+infg_gene_sets = infg_gene_sets[!duplicated(infg_gene_sets$gene_symbol), ]
+
+infg_gene_set = infg_gene_sets$gene_symbol
+
+infg_gene_set <- gsub("\\-| ", ".", infg_gene_set)
+
+sum(infg_gene_set %in% colnames(mel_dat))  
+
+infg_gene_set = intersect(infg_gene_set, common_cols)
+```
+
+
+```{r}
+
+
+xgb_model <- xgb_m
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+
+
+Importance_func <- function(
+    no,
+    small ,
+    medium,
+    large,
+    xlarge,
+    gene_set
+){
+  
+  # browser()
+  
+   models <- list(
+    no = no,
+    small = small,
+    medium = medium,
+    large = large,
+    extra_large = xlarge
+  )
+   
+   
+    importance_results <- data.frame(
+    Model = character(),
+    Important_Gene_Number = numeric(),
+    Ifng_Gene_Number = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  
+  
+  for (model_index in 1 : length(names(models))) {
+   
+     model <- models[[model_index]]
+     
+     
+    # Check if the model is an H2O model
+    if (class(model) == "H2OBinomialModel") {
+     
+
+      
+      modelimp <- h2o.varimp(model)
+      modelimp_d <- as.data.frame(modelimp)
+      modelimp_d <- filter(modelimp_d, !scaled_importance == 0)
+      modelimp_d$gene <- rownames(modelimp_d) 
+      
+      important_gene_number <- nrow(modelimp_d)
+      ifng_gene_number <- length(intersect(modelimp_d$variable, gene_set))
+      
+      
+    } else {
+
+      modelImp <- varImp(model, scale = T)
+      modelImp_d <- data.frame(modelImp$importance)
+      modelImp_d <- modelImp_d %>% filter(!Overall == 0)
+      modelImp_d$gene <- rownames(modelImp_d)
+      
+      
+      important_gene_number <- nrow(modelImp_d)
+      ifng_gene_number <- length(intersect(modelImp_d$gene, gene_set))
+      
+    }
+    
+    # Store the results in the data frame
+    importance_results <- rbind(importance_results, data.frame(
+      Model = names(models)[model_index],
+      Important_Gene_Number = important_gene_number,
+      Ifng_Gene_Number= ifng_gene_number
+    ))
+    
+    rownames(importance_results) <- NULL
+  }
+  
+ importance_results
+   
+  
+}
+
+```
+
+
+## XGBoost
+
+```{r}
+xgb_imp <- Importance_func(xgb_n,
+                           xgb_s,
+                          xgb_m,
+                          xgb_l,
+                          xgb_xl,
+                          infg_gene_set)
+
+library(tidyr)
+
+xgb_imp <- xgb_imp %>%
+  pivot_longer(!Model, names_to = "Gene_List", values_to = "Gene_Number")
+
+```
+
+```{r, fig.width= 4.5, fig.height=5.2}
+
+library(RColorBrewer)
+
+palette <- c("#20d8fd", "#bb190a")
+
+library(ggpubr)
+p <- ggbarplot(xgb_imp, x = "Model", y = "Gene_Number", width = 0.5, fill = "Gene_List", color = "black",
+ label = TRUE, lab.pos = "out", lab.col = "black", position = position_dodge(0.5) , legend.title = "", x.text.angle = 45)
+ # , lab.hjust = -0.2, lab.vjust = 0.5) + coord_flip(ylim = c(0,max(xgb_imp$Gene_Number)*1.2))
+
+p + theme(legend.position = "top") +
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005")) + 
+  scale_color_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                     labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                                "Important_Gene_Number" = "Important Gene Number")) + 
+  scale_fill_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                    labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                               "Important_Gene_Number" = "Important  Gene Number"))
+  
+
+
+
+```
+
+
+
+
+## Random Forest
+
+```{r}
+rf_imp <- Importance_func(rf_n,
+                          rf_s,
+                          rf_m,
+                          rf_l,
+                          rf_xl,
+                          infg_gene_set)
+
+rf_imp <- rf_imp %>%
+  pivot_longer(!Model, names_to = "Gene_List", values_to = "Gene_Number")
+
+```
+
+```{r, fig.width= 4.5, fig.height=5.5}
+library(ggpubr)
+p <- ggbarplot(rf_imp, x = "Model", y = "Gene_Number",  width = 0.5, fill = "Gene_List", color = "black",
+ label = TRUE, lab.pos = "out", lab.col = "black", position = position_dodge(0.6) , legend.title = "", x.text.angle = 45)
+# , lab.hjust = -0.2, lab.vjust = 0.5) + coord_flip(ylim = c(0,max(rf_imp$Gene_Number)*1.2))
+
+p + theme(legend.position = "top")+
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005"))+ 
+  scale_color_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                     labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                                "Important_Gene_Number" = "Important Gene Number")) + 
+  scale_fill_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                    labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                               "Important_Gene_Number" = "Important Gene Number"))
+```
+
+
+
+## GLMNet
+
+```{r}
+glmnet_imp <- Importance_func(
+                          glmnet_n,
+                          glmnet_s,
+                          glmnet_m,
+                          glmnet_l,
+                          glmnet_xl,
+                          infg_gene_set)
+glmnet_imp <- glmnet_imp %>%
+  pivot_longer(!Model, names_to = "Gene_List", values_to = "Gene_Number")
+
+
+```
+
+```{r, fig.width= 4.5, fig.height=4.5}
+p <- ggbarplot(glmnet_imp, x = "Model", y = "Gene_Number", width = 0.5, fill = "Gene_List", color = "black",
+ label = TRUE, lab.pos = "out", lab.col = "black", position = position_dodge(0.5) , legend.title = "", ylim = c(0,500), , x.text.angle = 45)
+# , lab.hjust = -0.2, lab.vjust = 0.5) + coord_flip(ylim = c(0,max(glmnet_imp$Gene_Number)*1.2))
+
+p + theme(legend.position = "top")+
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005")) + 
+  scale_color_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                     labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                                "Important_Gene_Number" = "Important Gene Number")) + 
+  scale_fill_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                    labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                               "Important_Gene_Number" = "Important  Gene Number"))
+
+
+```
+
+
+
+## Deep Learning
+
+```{r}
+dl_imp <- Importance_func(dl_n,
+                          dl_s,
+                          dl_m,
+                          dl_l,
+                          dl_xl,
+                          infg_gene_set)
+
+dl_imp <- dl_imp %>%
+  pivot_longer(!Model, names_to = "Gene_List", values_to = "Gene_Number")
+
+```
+
+```{r, fig.width= 5, fig.height=4.5}
+p <- ggbarplot(dl_imp, x = "Model", y = "Gene_Number", width = 0.5, fill = "Gene_List", color = "black",
+ label = TRUE, lab.pos = "out", lab.col = "black",  position = position_dodge(0.6) , legend.title = "", ylim = c(0,max(dl_imp$Gene_Number)*1.2), , x.text.angle = 45)
+ # , lab.hjust = -0.2, lab.vjust = 0.5) + coord_flip(ylim = c(0,max(dl_imp$Gene_Number)*1.2))
+
+p + theme(legend.position = "top")+
+    scale_x_discrete(labels = c("no" = "No Noise", 
+                              "small" = "SNR = 5", 
+                              "medium" = "SNR = 0.5",
+                              "large" = "SNR = 0.05",
+                              "extra_large" = "SNR = 0.005")) + 
+  scale_color_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                     labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                                "Important_Gene_Number" = "Important Gene Number")) + 
+  scale_fill_manual(values = c("Ifng_Gene_Number" = "#20d8fd", "Important_Gene_Number" = "#bb190a"), 
+                    labels = c("Ifng_Gene_Number" = "IFNG Res. Gene Number", 
+                               "Important_Gene_Number" = "Important  Gene Number"))
+```
+
+
+
+

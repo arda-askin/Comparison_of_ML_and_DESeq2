@@ -1,0 +1,388 @@
+---
+title: "Rncolin_Analysis"
+author: Arda Askin
+date: "`r Sys.Date()`"   
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    theme: sandstone
+--- 
+
+# package loading
+
+```{r, echo=FALSE, , message=FALSE, , warning=FALSE}
+library(dplyr)
+library(caret)
+library(MLeval)
+library(pROC)
+library(h2o)
+library(edgeR)
+library(pROC)
+library(ggpubr)
+
+h2o.init(nthreads = -1) 
+
+```
+
+
+# Prep Data 
+
+```{r}
+library(dplyr)
+
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+```
+
+
+```{r,fig.height= 3, fig.width=4}
+
+set.seed(23)
+
+snr = 5
+
+sd = mean(l_dat[["CXCL10"]])/snr
+
+l_dat[["CXCL10_fpco"]]  <- l_dat[["CXCL10"]] + rnorm(length(l_dat[["CXCL10"]]), mean = 0, sd = sd) 
+
+
+ggscatter(l_dat, x = "CXCL10", y = "CXCL10_fpco",
+   color = "black", shape = 21, size = 3, 
+   add = "reg.line",  
+   add.params = list(color = "blue", fill = "lightgray"), 
+   conf.int = TRUE, 
+   cor.coef = TRUE,
+   cor.coeff.args = list(method = "pearson", label.x = 3, label.sep = "\n")
+   )
+
+
+set.seed(23)
+
+snr = 2
+
+sd = mean(l_dat[["CXCL10"]])/snr
+
+l_dat[["CXCL10_lpco"]] <-  l_dat[["CXCL10"]] + rnorm(length(l_dat[["CXCL10"]]), mean = 0, sd = sd) 
+
+ggscatter(l_dat, x = "CXCL10", y = "CXCL10_lpco",
+   color = "black", shape = 21, size = 3, 
+   add = "reg.line",  
+   add.params = list(color = "blue", fill = "lightgray"), 
+   conf.int = TRUE, 
+   cor.coef = TRUE,
+   cor.coeff.args = list(method = "pearson", label.x = 3, label.sep = "\n")
+   )
+
+
+set.seed(23)
+
+snr = 1
+
+sd = mean(l_dat[["CXCL10"]])/snr
+
+l_dat[["CXCL10_mpco"]] <-  l_dat[["CXCL10"]] + rnorm(length(l_dat[["CXCL10"]]), mean = 0, sd = sd) 
+
+ggscatter(l_dat, x = "CXCL10", y = "CXCL10_mpco",
+   color = "black", shape = 21, size = 3, 
+   add = "reg.line",  
+   add.params = list(color = "blue", fill = "lightgray"), 
+   conf.int = TRUE, 
+   cor.coef = TRUE,
+   cor.coeff.args = list(method = "pearson", label.x = 3, label.sep = "\n")
+   )
+
+
+set.seed(23)
+
+snr = 0.1
+
+sd = mean(l_dat[["CXCL10"]])/snr
+
+l_dat[["CXCL10_spco"]]  <-  l_dat[["CXCL10"]] + rnorm(length(l_dat[["CXCL10"]]), mean = 0, sd = sd) 
+
+ggscatter(l_dat, x = "CXCL10", y = "CXCL10_spco",
+   color = "black", shape = 21, size = 3, 
+   add = "reg.line",  
+   add.params = list(color = "blue", fill = "lightgray"), 
+   conf.int = TRUE, 
+   cor.coef = TRUE,
+   cor.coeff.args = list(method = "pearson", label.x = 3, label.sep = "\n")
+   )
+
+num <- nrow(l_dat)
+
+library(dplyr)
+
+set.seed(23)
+l_dat_rn <- l_dat %>%  mutate(RG1 = round(abs(rnorm(n=num, mean=50, sd=10))),
+                  RG2 = round(abs(rnorm(n=num, mean=500, sd=100))),
+                  RG3 = round(abs(rnorm(n=num, mean=90, sd=2))),
+                  RG4 = round(abs(runif(n=num, min = 500, max=1000))),
+                  RG5 = round(abs(rnorm(n=num, mean=200, sd=100))),
+                  RG6 = round(abs(rnorm(n=num, mean=350, sd=250))),
+                  RG7 = round(abs(rnorm(n=num, mean=10, sd=2))),
+                  RG8 = round(abs(runif(n=num, min = 1500, max = 3000))),
+                  RG9 = round(abs(runif(n=num, min = 2000, max = 5000))),
+                  RG10 = round(abs(runif(n=num, min = 0, max = 5)))
+                  )
+```
+
+
+```{r}
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat_rn$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat_rn[ trainIndex,]
+
+test <- l_dat_rn[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+
+
+```
+
+
+```{r}
+infg_gene_set <- c("RG1","RG2","RG3","RG4","RG5","RG6","RG7","RG8","RG9","RG10","CXCL10", "CXCL10_copy", "CXCL10_fco", "CXCL10_lpco", "CXCL10_mpco", "CXCL10_spco")
+
+
+```
+
+```{r}
+xgb_model <- readRDS("./all_models/rncolin_xgb_final.RDS")
+rf_model<- readRDS("./all_models/rncolin_rf_final.RDS")
+glmnet_model <- readRDS("./all_models/rncolin_glmnet_final.RDS")
+ann_model_1 <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\rncolin_ann_fmod.rds\\dl_grid_co_model_4")
+
+
+```
+
+
+# AUC-ROC
+
+```{r}
+test_data_response <- test$meta.multiple.bin
+test_data <- test
+test_dat <- l_te
+ann_model <- ann_model_1
+
+  xgb_roc <- roc(test_data_response, 
+                 predict(xgb_model, test_dat, type = "prob")[,1], 
+                 levels = rev(levels(test_data_response)))
+  rf_roc <- roc(test_data_response, 
+                predict(rf_model, test_dat, type = "prob")[,1], 
+                levels = rev(levels(test_data_response)))
+  
+  glmnet_roc <- roc(test_data_response, 
+                    predict(glmnet_model, test_dat, type = "prob")[,1], 
+                    levels = rev(levels(test_data_response)))
+  
+  test.hex <- as.h2o(test_data)
+  pred <- h2o.predict(ann_model, test.hex)
+  predicted_prob <- as.data.frame(pred)
+  predicted_prob <- predicted_prob$High
+  true_labels <- as.vector(test_data_response)
+  ann_roc <- roc(response = true_labels, predictor = predicted_prob)
+  
+  
+```
+
+
+
+```{r,fig.height= 4, fig.width= 4}
+
+plot.roc(ann_roc, las=1, lwd=1.7, col = "#66C2A5", xlab=" 1 - specificity")
+
+plot.roc(xgb_roc, add=TRUE, lwd=1.7, col = "#E5C494")
+
+plot.roc(rf_roc, add=TRUE, lwd=1.7, col = "#8DA0CB")
+
+plot.roc(glmnet_roc, add=TRUE, lwd=1.7, col = "#E78AC3")
+
+
+legend("bottomright", legend = c(paste("Deep Learning", round(auc(ann_roc), 4)), 
+                                 paste("XGBoost", round(auc(xgb_roc), 4)),
+                                 paste("Random Forest", round(auc(rf_roc), 4)), 
+                                 paste("GLMNet", round(auc(glmnet_roc), 4) )), 
+                          lty = c(1, 1, 1, 1), 
+                          col =c("#66C2A5","#E5C494", "#8DA0CB", "#E78AC3"), cex=0.6, lwd=1.5, inset = 0.05,
+                                  title = "AUC")
+                          par(mfrow = c(1, 1))
+
+
+
+```
+
+
+```{r}
+require(caret)
+require(gridExtra)
+require(h2o)
+
+accuracy_table <- function(
+    test_data,
+    condition,
+    xgb_model ,
+    rf_model,
+    # svmRadialWeights_model,
+    glmnet_model,
+    h2o_model
+){
+  models <- list(
+    XGBoost = xgb_model,
+    Random_Forest = rf_model,
+    # svmRadialWeights_model = svmRadialWeights_model,
+    GLMNet = glmnet_model,
+    Deep_Learning = h2o_model
+  )
+  
+  accuracy_results <- data.frame(
+    Model = character(),
+    Accuracy = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  test_dat <- test_data[,colnames(test_data) != condition]
+  
+  for (model_name in names(models)) {
+    model <- models[[model_name]]
+    
+    # Check if the model is an H2O model
+    if (inherits(model, "H2OModel")) {
+      # Predict using H2O model
+      predictions <- as.factor(as.vector(h2o.predict(model, as.h2o(test_dat))$predict))
+    } else {
+      # Predict using non-H2O model
+      predictions <- predict(model, test_dat)
+    }
+    
+    # Calculate the confusion matrix and accuracy
+    confusion <- confusionMatrix(predictions, test_data[[condition]])
+    accuracy <- round(confusion$overall['Accuracy'], digits = 3)
+    
+    # Store the results in the data frame
+    accuracy_results <- rbind(accuracy_results, data.frame(
+      Model = model_name,
+      Accuracy = accuracy
+    ))
+    
+    rownames(accuracy_results) <- NULL
+  }
+  
+  
+  accuracy_results
+  
+  
+  
+}
+```
+
+
+
+
+```{r,fig.height= 5.5, fig.width= 4}
+accuracy <- accuracy_table(
+  test_data = test,
+  condition = "meta.multiple.bin",
+    xgb_model = xgb_model ,
+    rf_model = rf_model,
+    glmnet_model = glmnet_model,
+    h2o_model = ann_model_1
+  
+)
+
+palette <- c("#66C2A5","#E5C494", "#8DA0CB", "#E78AC3")
+
+names(palette) <- c("Deep_Learning","XGBoost", "Random_Forest", "GLMNet" )
+
+
+library(ggpubr)
+p <- ggbarplot(accuracy, x = "Model", y = "Accuracy", width = 0.5, fill = "Model", color = "black",
+ label = TRUE, palette = palette, x.text.angle = 45)
+
+p + theme(legend.position = "none")
+```
+
+
+# artifical column  importance
+
+```{r}
+
+#xgboost
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+# xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+xgbImp_d$gene <- row.names(xgbImp_d)
+colnames(xgbImp_d)[colnames(xgbImp_d) == "Overall"] ="xgb_score"
+
+
+
+# random forest
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+# rfImp_d <- rfImp_d  %>% filter(!Overall == 0)
+rfImp_d$gene <- rownames(rfImp_d)
+colnames(rfImp_d)[colnames(rfImp_d) == "Overall"] ="rf_score"
+# rfImp_d$rf_score <- signif(rfImp_d$rf_score, digits  = 8) 
+
+# glmnet
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+# glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+glmnetImp_d$gene <- rownames(glmnetImp_d)
+colnames(glmnetImp_d)[colnames(glmnetImp_d) == "Overall"] ="glmnet_score"
+
+
+# ann 
+
+ann_varimp_1 <- h2o.varimp(ann_model_1)
+ann_varimp_1_d <- as.data.frame(ann_varimp_1)
+# identical(ann_varimp_1_d$relative_mportance, ann_varimp_1_d$scaled_mportance)
+# [1] TRUE
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "variable"] ="gene"
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "scaled_mportance"] ="ann_score"
+ann_varimp_1_d <- ann_varimp_1_d %>% select(gene, ann_score)
+
+
+```
+
+
+
+```{r}
+v1 <- full_join(ann_varimp_1_d, rfImp_d, by= "gene") 
+v2 <- full_join(xgbImp_d,glmnetImp_d, by= "gene")
+v3 <- full_join(v1,v2, by= "gene")
+merged_genes <- v3
+
+ifng_scores <- merged_genes %>% filter(gene %in% infg_gene_set)
+
+ifng_scores 
+
+```
+

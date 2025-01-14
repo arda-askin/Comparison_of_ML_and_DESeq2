@@ -1,0 +1,618 @@
+---
+title: "Heatmaps"
+output: html_document
+date: "2024-12-07"
+---
+
+
+```{r}
+library(pheatmap)
+library(dplyr)
+library(caret)
+library(MLeval)
+library(pROC)
+library(h2o)
+library(edgeR)
+library(pROC)
+library(pheatmap)
+library(RColorBrewer)
+library("FactoMineR")
+library("devtools")
+library("factoextra")
+library(cluster)
+
+h2o.init(nthreads = -1) 
+
+```
+
+
+
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+
+```
+
+
+```{r}
+common_cols <- intersect(colnames(l_dat), colnames(mel_dat))
+
+library(msigdbr)
+
+infg_gene_sets = msigdbr(species = "human", category = "H")
+
+infg_gene_sets = infg_gene_sets %>%  filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+sum(duplicated(infg_gene_sets$gene_symbol))
+
+infg_gene_sets = infg_gene_sets[!duplicated(infg_gene_sets$gene_symbol), ]
+
+infg_gene_set = infg_gene_sets$gene_symbol
+
+infg_gene_set <- gsub("\\-| ", ".", infg_gene_set)
+
+sum(infg_gene_set %in% colnames(mel_dat))  
+
+infg_gene_set = intersect(infg_gene_set, common_cols)
+
+infg_gene_set = append(infg_gene_set, "meta.multiple.bin")
+```
+
+```{r}
+
+ifng_gene_exp_tr <- select(train, intersect(colnames(train), infg_gene_set))
+ifng_gene_exp_tr <- ifng_gene_exp_tr[order(ifng_gene_exp_tr$meta.multiple.bin), ]
+ifng_gene_exp_tr$meta.data <- "train"
+
+```
+
+```{r}
+
+ifng_gene_exp_te <- select(test, intersect(colnames(test), infg_gene_set))
+ifng_gene_exp_te <- ifng_gene_exp_te[order(ifng_gene_exp_te$meta.multiple.bin), ]
+ifng_gene_exp_te$meta.data <- "test"
+
+```
+
+# Expression Heatmap
+
+```{r}
+library(RColorBrewer)
+
+ifng_gene_exp <- rbind(ifng_gene_exp_te, ifng_gene_exp_tr)
+ann_row = select(ifng_gene_exp, starts_with("meta."))
+
+ann_row = rename(ann_row, data = meta.data)
+ann_row = rename(ann_row, categorized = meta.multiple.bin)
+
+ifng_gene_count = select(ifng_gene_exp, -starts_with("meta."))
+
+ann_colors = list(
+  data = c("test" = "#B15928" , "train" = "#33A02C"),
+  categorized = c( "High" = "#E31A1C", "Low" = "#6A3D9A")
+)
+
+
+# Create custom column labels
+col_labels <- colnames(ifng_gene_count)
+
+seq = seq(1, 188, by = 14)
+
+col_labels <- ifelse(col_labels %in% col_labels[seq] == 0, "", col_labels )
+
+
+pheatmap(t(ifng_gene_count), annotation_col  = ann_row, show_colnames=F,scale = "row", annotation_colors = ann_colors,labels_row =col_labels, fontsize_row = 10, cluster_cols=F, col = rev(brewer.pal(11, "RdBu")), cluster_rows =F, show_rownames = F)
+
+```
+
+
+
+
+# model loading
+
+```{r, echo=FALSE}
+xgb_model <- readRDS("./all_models/xgb_valid_final.RDS")
+rf_model<- readRDS("./all_models/rf_valid_final.RDS")
+glmnet_model <- readRDS("./all_models/glmnet_valid_final.RDS")
+ann_model_1 <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\ann_valid_fi.RDS\\dl_grid_no_model_4")
+
+## diff expr.
+train_diff_genes <- readRDS("TCGA_SKCM_train_de_genes_IFNG_final.rds") 
+test_diff_genes <- readRDS("TCGA_SKCM_test_de_genes_IFNG_final.rds")  
+```
+
+
+# important gene extraction
+
+```{r}
+
+#xgboost
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+xgbImp_d$gene <- row.names(xgbImp_d)
+colnames(xgbImp_d)[colnames(xgbImp_d) == "Overall"] ="xgb_score"
+
+
+
+# random forest
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+rfImp_d <- rfImp_d  %>% filter(!Overall == 0)
+rfImp_d$gene <- rownames(rfImp_d)
+colnames(rfImp_d)[colnames(rfImp_d) == "Overall"] ="rf_score"
+# rfImp_d$rf_score <- signif(rfImp_d$rf_score, digits  = 8) 
+
+# glmnet
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+glmnetImp_d$gene <- rownames(glmnetImp_d)
+colnames(glmnetImp_d)[colnames(glmnetImp_d) == "Overall"] ="glmnet_score"
+
+# ann 
+
+ann_varimp_1 <- h2o.varimp(ann_model_1)
+ann_varimp_1_d <- as.data.frame(ann_varimp_1)
+# identical(ann_varimp_1_d$relative_mportance, ann_varimp_1_d$scaled_mportance)
+# [1] TRUE
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "variable"] ="gene"
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "scaled_mportance"] ="ann_score"
+ann_varimp_1_d <- ann_varimp_1_d %>% select(gene, ann_score)
+
+# diff expr.
+
+test_diff_genes <- test_diff_genes %>% 
+                   filter(padj < 0.05) %>% 
+                   mutate(wlfc = -log2(padj)  * abs(log2FoldChange)) %>% 
+                   select(gene, wlfc)
+
+
+train_diff_genes <-train_diff_genes %>% 
+                   filter(padj < 0.05) %>% 
+                   mutate(wlfc = -log2(padj)  * abs(log2FoldChange)) %>% 
+                   select(gene, wlfc)
+
+colnames(test_diff_genes) <- paste("test", colnames(test_diff_genes), sep = "_")
+colnames(train_diff_genes) <- paste("train", colnames(train_diff_genes), sep = "_")
+
+colnames(test_diff_genes)[colnames(test_diff_genes) == "test_gene"] ="gene"
+colnames(train_diff_genes)[colnames(train_diff_genes) == "train_gene"] ="gene"
+
+
+```
+
+
+```{r}
+common_gene_list<- list(
+  ann = ann_varimp_1_d$gene,
+  xgb = xgbImp_d$gene,
+  glmnet = glmnetImp_d$gene,
+  train_diff_genes= test_diff_genes$gene,
+  test_diff_genes = train_diff_genes $gene,
+  rf = rfImp_d$gene
+)
+
+common_elements <- Reduce(intersect, common_gene_list)
+
+```
+
+
+# merging for distance
+
+```{r}
+
+v1 <- full_join(ann_varimp_1_d, rfImp_d, by= "gene") 
+v2 <- full_join(xgbImp_d,glmnetImp_d, by= "gene")
+v3 <- full_join(train_diff_genes,test_diff_genes, by= "gene")
+v4 <- full_join(v1,v2, by= "gene")
+v5 <- full_join(v3,v4, by= "gene")
+
+merged_genes <- v5
+
+rownames(merged_genes) <- merged_genes$gene
+
+merged_genes<- merged_genes %>% na.omit(merged_genes)
+
+merged_genes <- select(merged_genes, -gene)
+
+```
+
+# Heatmap for genes using non-normalized data
+
+```{r}
+
+# distance_matrix_scaled <- as.matrix(get_dist(merged_genes, method = "canberra")) 
+
+
+pheatmap(merged_genes,
+         main = "Heatmaps for Common Genes",
+         scale = "row",
+         # display_numbers = TRUE,
+         # fontsize_number = 10, 
+         treeheight_row = 0, treeheight_col = 0,
+
+         color = rev(brewer.pal(n= 20, "RdBu"))
+)
+
+```
+
+
+
+
+
+
+# Canberra Distance Matrix (No Zero No Filtering)
+
+```{r,fig.height= 4, fig.width=5.5}
+
+distance_matrix_scaled <- as.matrix(get_dist(t(merged_genes), method = "canberra")) 
+
+
+pheatmap(distance_matrix_scaled,
+         main = "Canberra Distance Matrix",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+
+         color = rev(brewer.pal(n= 20, "RdBu"))
+)
+```
+
+# Kendall Distance Matrix (No Zero No Filtering)
+
+```{r,fig.height= 4, fig.width=5.5}
+w_mat <- cor(merged_genes, method = 'kendall')
+
+pheatmap(w_mat,
+         main = "Kendall Matrix",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+         # annotation_col = alg_col,
+         # annotation_row = alg_col,
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+
+
+```{r}
+preprocessed_data <- preProcess(merged_genes, method = 'range')
+transformed_data <- predict(preprocessed_data, merged_genes)
+```
+
+# Canberra Distance Matrix (No Zero No Filtering Normalized)
+
+```{r,fig.height= 4, fig.width=5.5}
+library(pheatmap)
+library(RColorBrewer)
+library("FactoMineR")
+library("devtools")
+library("factoextra")
+library(cluster)
+
+distance_matrix_scaled <- as.matrix(get_dist(t(transformed_data), method = "canberra")) 
+
+
+pheatmap(distance_matrix_scaled,
+         main = "             Canberra Distance Matrix ",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+
+
+
+
+# Kendall Distance Matrix (No Zero No Filtering Normalized)
+
+```{r,fig.height= 4, fig.width=5.5}
+w_mat <- cor(transformed_data, method = 'kendall')
+
+pheatmap(w_mat,
+         main = "Kendall Matrix ",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+         # annotation_col = alg_col,
+         # annotation_row = alg_col,
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+
+# Euclidean (No Zero No Filtering Normalized)
+```{r, fig.height= 4, fig.width=5.5}
+distance_matrix_scaled <- as.matrix(get_dist(t(transformed_data), method = "euclidean")) 
+
+
+pheatmap(distance_matrix_scaled,
+         main = "       Euclidean Distance Matrix",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+# Heatmap for genes using normalized data 
+
+```{r}
+
+# distance_matrix_scaled <- as.matrix(get_dist(transformed_data, method = "canberra")) 
+
+
+pheatmap(transformed_data,
+         scale = "row",
+         main = " Heatmap for Common Genes ",
+         # display_numbers = TRUE,
+         # fontsize_number = 10, 
+         treeheight_row = 0, treeheight_col = 0,
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+
+```
+
+
+
+
+
+```{r}
+## diff expr.
+train_diff_genes <- readRDS("TCGA_SKCM_train_de_genes_IFNG_final.rds") 
+test_diff_genes <- readRDS("TCGA_SKCM_test_de_genes_IFNG_final.rds")  
+```
+
+
+
+```{r}
+#xgboost
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+xgbImp_d$gene <- row.names(xgbImp_d)
+colnames(xgbImp_d)[colnames(xgbImp_d) == "Overall"] ="xgb_score"
+
+
+
+# random forest
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+rfImp_d <- rfImp_d  %>% filter(!Overall == 0)
+rfImp_d$gene <- rownames(rfImp_d)
+colnames(rfImp_d)[colnames(rfImp_d) == "Overall"] ="rf_score"
+# rfImp_d$rf_score <- signif(rfImp_d$rf_score, digits  = 8) 
+
+# glmnet
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+glmnetImp_d$gene <- rownames(glmnetImp_d)
+colnames(glmnetImp_d)[colnames(glmnetImp_d) == "Overall"] ="glmnet_score"
+
+# ann 
+
+ann_varimp_1 <- h2o.varimp(ann_model_1)
+ann_varimp_1_d <- as.data.frame(ann_varimp_1)
+# identical(ann_varimp_1_d$relative_mportance, ann_varimp_1_d$scaled_mportance)
+# [1] TRUE
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "variable"] ="gene"
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "scaled_mportance"] ="ann_score"
+ann_varimp_1_d <- ann_varimp_1_d %>% select(gene, ann_score)
+
+# diff expr.
+
+test_diff_genes$significance<- "NO"
+test_diff_genes$significance[test_diff_genes$padj < 0.05 & test_diff_genes$log2FoldChange > 1 ] <- "UP"
+test_diff_genes$significance[test_diff_genes$padj < 0.05 & test_diff_genes$log2FoldChange < -1 ] <- "DOWN"
+
+train_diff_genes$significance<- "NO"
+train_diff_genes$significance[train_diff_genes$padj < 0.05 & train_diff_genes$log2FoldChange > 1 ] <- "UP"
+train_diff_genes$significance[train_diff_genes$padj < 0.05 & train_diff_genes$log2FoldChange < -1 ] <- "DOWN"
+
+
+
+
+
+test_diff_genes <- test_diff_genes %>% 
+                   filter(significance != "NO") %>% 
+                   mutate(test_wlfc = -log2(padj)  * abs(log2FoldChange)) %>% 
+                   select(gene, test_wlfc)
+
+
+train_diff_genes <-train_diff_genes %>% 
+                   filter(significance != "NO") %>% 
+                   mutate(train_wlfc = -log2(padj)  * abs(log2FoldChange)) %>% 
+                   select(gene, train_wlfc)
+
+```
+
+
+
+# merging for distance
+
+```{r}
+
+v1 <- full_join(ann_varimp_1_d, rfImp_d, by= "gene") 
+v2 <- full_join(xgbImp_d,glmnetImp_d, by= "gene")
+v3 <- full_join(train_diff_genes,test_diff_genes, by= "gene")
+v4 <- full_join(v1,v2, by= "gene")
+v5 <- full_join(v3,v4, by= "gene")
+
+merged_genes <- v5
+
+rownames(merged_genes) <- merged_genes$gene
+
+merged_genes<- merged_genes %>% na.omit(merged_genes)
+
+merged_genes <- select(merged_genes, -gene)
+
+```
+
+
+# Canberra Distance Matrix (No Zero Yes Filtering)
+
+```{r,fig.height= 4, fig.width=5.5}
+library(pheatmap)
+library(RColorBrewer)
+library("FactoMineR")
+library("devtools")
+library("factoextra")
+library(cluster)
+
+distance_matrix_scaled <- as.matrix(get_dist(t(merged_genes), method = "canberra")) 
+
+
+pheatmap(distance_matrix_scaled,
+         main = "             Canberra Distance Matrix",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+
+# Heatmap for genes using non-normalized data
+
+```{r}
+
+# distance_matrix_scaled <- as.matrix(get_dist(merged_genes, method = "canberra")) 
+
+
+pheatmap(merged_genes,
+         scale = "row",
+         main = "Heatmaps for Common Genes",
+         # display_numbers = TRUE,
+         # fontsize_number = 10, 
+         treeheight_row = 0, treeheight_col = 0,
+
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+
+```
+
+
+# Kendall Distance Matrix (No Zero Yes Filtering)
+
+```{r,fig.height= 4, fig.width=5.5}
+w_mat <- cor(merged_genes, method = 'kendall')
+
+pheatmap(w_mat,
+         main = "Kendall Matrix ",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+         # annotation_col = alg_col,
+         # annotation_row = alg_col,
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+
+```{r}
+preprocessed_data <- preProcess(merged_genes, method = 'range')
+transformed_data <- predict(preprocessed_data, merged_genes)
+```
+
+# Canberra Distance Matrix (No Zero Yes Filtering Normalized)
+
+```{r,fig.height= 4, fig.width=5.5}
+library(pheatmap)
+library(RColorBrewer)
+library("FactoMineR")
+library("devtools")
+library("factoextra")
+library(cluster)
+
+distance_matrix_scaled <- as.matrix(get_dist(t(transformed_data), method = "canberra")) 
+
+
+pheatmap(distance_matrix_scaled,
+         main = "Canberra Distance Matrix ",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+# Kendall Distance Matrix (No Zero Yes Filtering Normalized)
+
+```{r,fig.height= 4, fig.width=5.5}
+w_mat <- cor(transformed_data, method = 'kendall')
+
+pheatmap(w_mat,
+         main = "Kendall Matrix ",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+         # annotation_col = alg_col,
+         # annotation_row = alg_col,
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+
+# Euclidean (No Zero Yes Filtering Normalized)
+```{r, fig.height= 4, fig.width=5.5}
+distance_matrix_scaled <- as.matrix(get_dist(t(transformed_data), method = "euclidean"))
+
+
+pheatmap(distance_matrix_scaled,
+         main = " Euclidean Distance Matrix",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+
+# Heatmap for genes (using normalized data)
+
+```{r}
+
+# distance_matrix_scaled <- as.matrix(get_dist(transformed_data, method = "canberra")) 
+
+
+pheatmap(transformed_data,
+         scale = "row",
+         main = "Heatmaps for Common Genes ",
+         treeheight_row = 0, treeheight_col = 0,
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+
+```
+

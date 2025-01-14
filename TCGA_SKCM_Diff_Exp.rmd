@@ -6,22 +6,142 @@ output: html_document
 ---
 
 # data loading
+ 
+```{r}
+tcga_skcm <- readRDS("tcga_skcm.rds")
+
+mel_dat <- readRDS("validation_lcpm.rds")
+# colnames(mel_dat) <- gsub("g.","",colnames(mel_dat))
+# saveRDS(mel_dat, "validation_lcpm.rds")
+# val_dat <- readRDS("validation_lcpm_GSE98394.rds")
+
+```
+
 
 ```{r}
 tcga_skcm <- readRDS("tcga_skcm.rds")
+tcga_skcm <- tcga_skcm %>% select(!starts_with("meta."))
+
+c_tcga_skcm <- t(tcga_skcm)
+
+keep.exprs <- filterByExpr(c_tcga_skcm)
+c_tcga_skcm <- c_tcga_skcm[keep.exprs,]
+l_dat <- cpm(c_tcga_skcm, log=T, prior.count = 1)
+l_dat <- as.data.frame(t(l_dat))
+
+
 ```
+
+
+```{r}
+
+common_cols <- intersect(colnames(l_dat), colnames(mel_dat))
+
+```
+
+
+```{r}
+library(msigdbr)
+
+infg_gene_sets = msigdbr(species = "human", category = "H")
+
+infg_gene_sets = infg_gene_sets %>%  filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+sum(duplicated(infg_gene_sets$gene_symbol))
+
+infg_gene_sets = infg_gene_sets[!duplicated(infg_gene_sets$gene_symbol), ]
+
+infg_gene_set = infg_gene_sets$gene_symbol
+
+infg_gene_set <- gsub("\\-| ", ".", infg_gene_set)
+
+sum(infg_gene_set %in% colnames(mel_dat))  
+
+infg_gene_set = intersect(infg_gene_set, common_cols)
+
+
+```
+
+
+# addition of high/low group to validation data set
+
+```{r}
+# mel_dat <- mel_dat %>% mutate(
+#   meta.multiple.gene = rowMeans(mel_dat[,infg_gene_set])
+# )
+# 
+# 
+# 
+# mel_dat <- mel_dat %>%
+#   mutate(
+#     meta.multiple.bin = case_when(
+#       mel_dat$meta.multiple.gene > median(mel_dat$meta.multiple.gene) ~ "High",
+#       mel_dat$meta.multiple.gene <= median(mel_dat$meta.multiple.gene) ~ "Low",
+#     )
+#   )
+# 
+# mel_dat <- mel_dat %>% select(-meta.multiple.gene)
+# 
+# mel_dat$meta.multiple.bin <- as.factor(mel_dat$meta.multiple.bin)
+# 
+# saveRDS(mel_dat, "validation_lcpm.rds")
+
+```
+
+
+
+
+```{r}
+# l_dat <- l_dat %>% mutate(
+#   meta.multiple.gene = rowMeans(l_dat[,infg_gene_set])
+# ) 
+# 
+# l_dat <- l_dat %>% 
+#   mutate(
+#     meta.multiple.bin = case_when(
+#       l_dat$meta.multiple.gene > median(l_dat$meta.multiple.gene) ~ "High",
+#       l_dat$meta.multiple.gene <= median(l_dat$meta.multiple.gene) ~ "Low",
+#     )
+#   )
+# 
+# saveRDS(l_dat, "skcm_ready.RDS")
+
+```
+
+
+
+```{r}
+c_tcga_skcm <- as.data.frame(t(c_tcga_skcm))
+c_tcga_skcm$meta.patient <- rownames(c_tcga_skcm)
+
+
+l_dat$meta.patient <- rownames(l_dat)
+l_dat <- select(l_dat, starts_with("meta."))
+
+c_tcga_skcm <- full_join(c_tcga_skcm, l_dat, by = "meta.patient")
+
+```
+
+
+
+
+
 
 # data splitting
 
 ```{r}
 
-imn_data <- tcga_skcm
+imn_data <- c_tcga_skcm
+
+rownames(imn_data) <- imn_data$meta.patient
+
+imn_data$meta.multiple.bin <- as.factor(imn_data$meta.multiple.bin)
 
 library(caret)
 
 set.seed(3456)
 
-trainIndex <- createDataPartition(imn_data$meta.lymph.inf.sign, p = .7, 
+trainIndex <- createDataPartition(imn_data$meta.multiple.bin, p = .7, 
                                   list = FALSE, 
                                   times = 1)
 
@@ -29,9 +149,9 @@ row_train <- imn_data[ trainIndex,]
 
 row_test <- imn_data[-trainIndex,]
 
-summary(row_train$meta.lymph.inf.sign)
+summary(row_train$meta.multiple.bin)
 
-summary(row_test$meta.lymph.inf.sign)
+summary(row_test$meta.multiple.bin)
 
 ```
 
@@ -44,38 +164,56 @@ library(dplyr)
 
 train_count <- row_train %>% select(!starts_with("meta."))
 
+# colnames(train_count) <- paste0("g.", colnames(train_count))
+
 train_count <- as.data.frame(t(train_count))
 
-train_col_data <- select(row_train, meta.lymph.inf.sign)
+train_col_data <- select(row_train, meta.multiple.bin)
 
-train_dds <- DESeqDataSetFromMatrix(countData = round(train_count),
+identical(colnames(train_count), rownames(train_col_data))
+
+train_dds <- DESeqDataSetFromMatrix(countData = train_count,
                               colData = train_col_data,
-                              design= ~ meta.lymph.inf.sign)
+                              design= ~ meta.multiple.bin)
 
-levels(train_dds$meta.lymph.inf.sign)
+levels(train_dds$meta.multiple.bin)
 
-train_dds$meta.lymph.inf.sign <- factor(train_dds$meta.lymph.inf.sign, levels = c("Low","High"))
+train_dds$meta.multiple.bin <- factor(train_dds$meta.multiple.bin, levels = c("Low","High"))
 
-train_smallestGroupSize <- min(summary(row_train$meta.lymph.inf.sign))
-train_keep <- rowSums(counts(train_dds) >= 10) >= train_smallestGroupSize
+# train_smallestGroupSize <- min(summary(row_train$meta.multiple.bin))
+# train_keep <- rowSums(counts(train_dds) >= 10) >= train_smallestGroupSize
+# 
+# train_dds <- train_dds[train_keep,]
 
-train_dds <- train_dds[train_keep,]
+# train_dds <- DESeq(train_dds,  minReplicatesForReplace = Inf)
 
 train_dds <- DESeq(train_dds)
 
 resultsNames(train_dds)
 
-train_res <-results(train_dds, name="meta.lymph.inf.sign_High_vs_Low")
+train_res <-results(train_dds, name="meta.multiple.bin_High_vs_Low")
+
+summary(train_res)
 
 train_res_ordered <- train_res[order(train_res$padj), ]
 
 train_diff_genes <- as.data.frame(train_res_ordered)
 
-train_diff_genes <-  train_diff_genes %>%  filter(padj < 0.05) 
+train_diff_genes$gene <- rownames(train_diff_genes)
+
+outlier_genes <- train_diff_genes %>% 
+                    filter(is.na(padj)) %>% 
+                                   select(gene)
+
+row.names(outlier_genes) <- NULL
+
+saveRDS(outlier_genes, "outlier_genes_IFNG.rds")
+
+# train_diff_genes <-  train_diff_genes %>%  filter(padj < 0.05) 
 
 train_resLFC <- lfcShrink(train_dds, 
-                    coef= "meta.lymph.inf.sign_High_vs_Low", 
-                    type = "apeglm")
+                    coef= "meta.multiple.bin_High_vs_Low", 
+                    format = "DataFrame")
 
 train_resLFC 
 
@@ -83,30 +221,24 @@ train_resLFC_df <- train_resLFC %>%
   as.data.frame() %>% 
   tibble::rownames_to_column("gene")
 
-train_de_genes <- train_resLFC_df %>% 
-  filter(padj < 0.05) 
+# train_de_genes <- train_resLFC_df %>% 
+#   filter(padj < 0.05) 
 
-saveRDS(train_diff_genes, "TCGA_SKCM_train_diff_genes_latest.rds")
-saveRDS(train_de_genes, "TCGA_SKCM_train_de_genes.rds")
-
-train_counts <- counts(train_dds_final, normalized = TRUE)
-
-train_counts <- as.data.frame(t(train_counts))
-
-saveRDS(train_counts, "TCGA_SKCM_train_normalized.rds")
-
-saveRDS(train_col_data, "TCGA_SKCM_train_col_data.rds")
+saveRDS(train_diff_genes, "TCGA_SKCM_train_diff_IFNG_final.rds")
+# saveRDS(train_de_genes, "TCGA_SKCM_train_de_genes.rds")
+# saveRDS(train_de_genes, "TCGA_SKCM_train_de_genes_ashr.rds")
+saveRDS(train_resLFC_df, "TCGA_SKCM_train_de_genes_IFNG_final.rds")
 
 ```
 
 ```{r}
-train_vsd <- vst(train_dds, blind=FALSE)
-
-train_vsd <- assay(train_vsd)
-
-train_vsd <- as.data.frame(t(train_vsd))
-
-saveRDS(train_vsd, "TCGA_SKCM_train_vsd.rds")
+# train_vsd <- vst(train_dds, blind=FALSE)
+# 
+# train_vsd <- assay(train_vsd)
+# 
+# train_vsd <- as.data.frame(t(train_vsd))
+# 
+# saveRDS(train_vsd, "TCGA_SKCM_train_vsd.rds")
 ```
 
 
@@ -118,72 +250,74 @@ library(dplyr)
 
 test_count <- row_test %>% select(!starts_with("meta."))
 
+# colnames(test_count) <- paste0("g.", colnames(test_count))
 test_count <- as.data.frame(t(test_count))
 
-test_col_data <- select(row_test, meta.lymph.inf.sign)
+test_col_data <- select(row_test, meta.multiple.bin)
 
-test_dds <- DESeqDataSetFromMatrix(countData = round(test_count),
+test_dds <- DESeqDataSetFromMatrix(countData = test_count,
                               colData = test_col_data,
-                              design= ~ meta.lymph.inf.sign)
+                              design= ~ meta.multiple.bin)
 
-levels(test_dds$meta.lymph.inf.sign)
+levels(test_dds$meta.multiple.bin)
 
-test_dds$meta.lymph.inf.sign <- factor(test_dds$meta.lymph.inf.sign, levels = c("Low","High"))
+test_dds$meta.multiple.bin <- factor(test_dds$meta.multiple.bin, levels = c("Low","High"))
 
-test_smallestGroupSize <- min(summary(row_test$meta.lymph.inf.sign))
-test_keep <- rowSums(counts(test_dds) >= 10) >= test_smallestGroupSize
+# test_smallestGroupSize <- min(summary(row_test$meta.multiple.bin))
+# test_keep <- rowSums(counts(test_dds) >= 10) >= test_smallestGroupSize
+# 
+# test_dds <- test_dds[test_keep,]
 
-test_dds <- test_dds[test_keep,]
+# test_dds <- DESeq(test_dds,  minReplicatesForReplace = Inf)
 
 test_dds <- DESeq(test_dds)
 
 resultsNames(test_dds)
 
-test_res <-results(test_dds, name="meta.lymph.inf.sign_High_vs_Low")
+test_res <-results(test_dds, name="meta.multiple.bin_High_vs_Low")
+
+summary(test_res)
 
 test_res_ordered <- test_res[order(test_res$padj), ]
 
 test_diff_genes <- as.data.frame(test_res_ordered)
 
-test_diff_genes <- test_diff_genes %>% 
-  filter(padj < 0.05) %>% 
-  filter(log2FoldChange > 3 | log2FoldChange < -3)
+test_diff_genes$gene <- rownames(test_diff_genes)
+
+# test_diff_genes <- test_diff_genes %>% 
+#   filter(padj < 0.05) %>% 
+#   filter(log2FoldChange > 3 | log2FoldChange < -3)
 
 test_resLFC <- lfcShrink(test_dds, 
-                    coef=  "meta.lymph.inf.sign_High_vs_Low", 
-                    type = "apeglm")
+                    coef=  "meta.multiple.bin_High_vs_Low",
+                    format = "DataFrame")
 test_resLFC
 
 test_resLFC_df <- test_resLFC %>% 
   as.data.frame() %>% 
   tibble::rownames_to_column("gene")
 
-test_de_genes <- test_resLFC_df %>% 
-  filter(padj < 0.05) 
+# test_de_genes <- test_resLFC_df %>% 
+#   filter(padj < 0.05) 
 
 
-saveRDS(test_diff_genes, "TCGA_SKCM_test_diff_genes_latest.rds")
-saveRDS(test_de_genes, "TCGA_SKCM_test_de_genes.rds")
-
-test_counts <- counts(test_dds_final, normalized = TRUE)
-
-test_counts <- as.data.frame(t(test_counts))
-
-saveRDS(test_counts, "TCGA_SKCM_test_normalized.rds")
-
-saveRDS(test_col_data, "TCGA_SKCM_test_col_data.rds")
+saveRDS(test_diff_genes, "TCGA_SKCM_test_diff_IFNG_final.rds")
+# saveRDS(test_de_genes, "TCGA_SKCM_test_de_genes_ashr.rds")
+saveRDS(test_resLFC_df, "TCGA_SKCM_test_de_genes_IFNG_final.rds")
 
 ```
 
 
 ```{r}
-test_vsd <- vst(test_dds, blind=FALSE)
-
-test_vsd <- assay(test_vsd)
-
-test_vsd <- as.data.frame(t(test_vsd))
-
-saveRDS(test_vsd, "TCGA_SKCM_test_vsd.rds")
+# test_vsd <- vst(test_dds, blind=FALSE)
+# 
+# test_vsd <- assay(test_vsd)
+# 
+# test_vsd <- as.data.frame(t(test_vsd))
+# 
+# saveRDS(test_vsd, "TCGA_SKCM_test_vsd.rds")
 
 ```
+
+
 

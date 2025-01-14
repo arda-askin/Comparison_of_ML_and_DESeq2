@@ -1,0 +1,286 @@
+---
+title: "Deep_Learning_Imp_Analysis"
+output: html_document
+date: "2025-01-11"
+---
+
+# load package 
+
+```{r}
+library(h2o)
+h2o.init(nthreads = -1) 
+library(dplyr)
+```
+
+
+# load model
+
+```{r}
+dl_n <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\ann_valid_fi.RDS\\dl_grid_no_model_4")
+dl_s <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_5.rds\\dl_grid_5_model_4")
+dl_m <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_0.5.rds\\dl_grid_0.5_model_4")
+dl_l <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_0.05.rds\\dl_grid_0.05_model_4")
+dl_xl <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_0.005.rds\\dl_grid_0.005_model_1")
+```
+
+
+```{r}
+Importance_func <- function(
+    no,
+    small ,
+    medium,
+    large,
+    xlarge
+){
+  
+  # browser()
+  
+  models <- list(
+    no = no,
+    small = small,
+    medium = medium,
+    large = large,
+    extra_large = xlarge
+  )
+  
+  
+  importance_results <- data.frame(
+    Model = character(),
+    Important_Gene_Number = numeric(),
+    Ifng_Gene_Number = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  
+  
+  for (model_index in 1 : length(names(models))) {
+    
+    model <- models[[model_index]]
+    
+    
+    # Check if the model is an H2O model
+    if (class(model) == "H2OBinomialModel") {
+      
+      
+      
+      modelimp <- h2o.varimp(model)
+      modelimp_d <- as.data.frame(modelimp)
+      modelimp_d <- filter(modelimp_d, !scaled_mportance == 0)
+      modelimp_d$gene <- rownames(modelimp_d) 
+      
+      gene_importance_score <- modelimp_d$scaled_mportance
+      gene_name <- modelimp_d$variable
+      condition <- model_index
+      
+    } else {
+      
+     message("Your model is not from h2o")
+      
+    }
+    
+    # Store the results in the data frame
+    importance_results <- rbind(importance_results, data.frame(
+      gene_importance_score = gene_importance_score,
+      gene_name = gene_name,
+      condition = paste0("condition", condition)
+    ))
+    
+  }
+  
+  importance_results
+  
+  
+  }
+
+```
+
+
+# deep learning imp data frame
+
+```{r}
+dl_imp <- Importance_func(dl_n,
+                          dl_s,
+                          dl_m,
+                          dl_l,
+                          dl_xl)
+```
+
+
+
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+common_cols <- intersect(colnames(l_dat), colnames(mel_dat))
+
+library(msigdbr)
+
+infg_gene_sets = msigdbr(species = "human", category = "H")
+
+infg_gene_sets = infg_gene_sets %>%  filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+sum(duplicated(infg_gene_sets$gene_symbol))
+
+infg_gene_sets = infg_gene_sets[!duplicated(infg_gene_sets$gene_symbol), ]
+
+infg_gene_set = infg_gene_sets$gene_symbol
+
+infg_gene_set <- gsub("\\-| ", ".", infg_gene_set)
+
+sum(infg_gene_set %in% colnames(mel_dat))  
+
+infg_gene_set = intersect(infg_gene_set, common_cols)
+```
+```{r}
+library(tidyr)
+
+# Pivot to wide format
+wide_varimp <- dl_imp %>%
+  pivot_wider(names_from = condition, values_from = gene_importance_score)
+```
+
+
+
+```{r}
+importance_scores <- wide_varimp
+
+importance_scores <- filter(importance_scores, importance_scores$gene_name %in% infg_gene_set)
+
+importance_scores$Diff_Cond1_Cond2 <- importance_scores$condition2 - importance_scores$condition1
+importance_scores$Diff_Cond1_Cond3 <- importance_scores$condition3 - importance_scores$condition1
+importance_scores$Diff_Cond1_Cond4 <- importance_scores$condition4 - importance_scores$condition1
+importance_scores$Diff_Cond1_Cond5 <- importance_scores$condition5 - importance_scores$condition1
+
+importance_scores$Pct_Change_Cond1_Cond2 <- (importance_scores$Diff_Cond1_Cond2 / importance_scores$condition1)*100 
+importance_scores$Pct_Change_Cond1_Cond3 <- (importance_scores$Diff_Cond1_Cond3 / importance_scores$condition1)*100  
+importance_scores$Pct_Change_Cond1_Cond4 <- (importance_scores$Diff_Cond1_Cond4 / importance_scores$condition1)*100  
+importance_scores$Pct_Change_Cond1_Cond5 <- (importance_scores$Diff_Cond1_Cond5 / importance_scores$condition1)*100  
+```
+
+
+
+```{r}
+breaks <- c(-100, -50, -20, -5, 0, 5, 20, 50, 100, 500)
+
+importance_scores$Cat_Change_Cond1_Cond2 <- cut(importance_scores$Pct_Change_Cond1_Cond2, breaks, include.lowest = TRUE)
+importance_scores$Cat_Change_Cond1_Cond3 <- cut(importance_scores$Pct_Change_Cond1_Cond3, breaks, include.lowest = TRUE)
+importance_scores$Cat_Change_Cond1_Cond4 <- cut(importance_scores$Pct_Change_Cond1_Cond4, breaks, include.lowest = TRUE)
+importance_scores$Cat_Change_Cond1_Cond5 <- cut(importance_scores$Pct_Change_Cond1_Cond5, breaks, include.lowest = TRUE)
+
+levels(importance_scores$Cat_Change_Cond1_Cond2) <- c("HD", "MHD", "LD", "MLD", "MLI", "LI", "MHI", "HI", "EHI")
+levels(importance_scores$Cat_Change_Cond1_Cond3) <- c("HD", "MHD", "LD", "MLD", "MLI", "LI", "MHI", "HI", "EHI")
+levels(importance_scores$Cat_Change_Cond1_Cond4) <- c("HD", "MHD", "LD", "MLD", "MLI", "LI", "MHI", "HI", "EHI")
+levels(importance_scores$Cat_Change_Cond1_Cond5) <- c("HD", "MHD", "LD", "MLD", "MLI", "LI", "MHI", "HI", "EHI")
+
+```
+
+
+
+```{r}
+
+importance_scores$Bin_Change_Cond1_Cond2 <- as.factor(ifelse(importance_scores$Pct_Change_Cond1_Cond2 <= 0, "Decreased", "Increased"))
+importance_scores$Bin_Change_Cond1_Cond3 <- as.factor(ifelse(importance_scores$Pct_Change_Cond1_Cond3 <= 0, "Decreased", "Increased"))
+importance_scores$Bin_Change_Cond1_Cond4 <- as.factor(ifelse(importance_scores$Pct_Change_Cond1_Cond4 <= 0, "Decreased", "Increased"))
+importance_scores$Bin_Change_Cond1_Cond5 <- as.factor(ifelse(importance_scores$Pct_Change_Cond1_Cond5 <= 0, "Decreased", "Increased"))
+
+```
+
+
+```{r}
+
+df1 <- data.frame(Cond1_Cond2 = summary(importance_scores$Cat_Change_Cond1_Cond2))
+
+df2 <- data.frame(Cond1_Cond3 = summary(importance_scores$Cat_Change_Cond1_Cond3))
+
+df3 <- data.frame(Cond1_Cond4 = summary(importance_scores$Cat_Change_Cond1_Cond4))
+
+df4 <- data.frame(Cond1_Cond5 = summary(importance_scores$Cat_Change_Cond1_Cond5))
+
+gene_info <- cbind(df1, df2)
+
+gene_info <- cbind(gene_info, df3)
+
+gene_info <- cbind(gene_info, df4)
+
+gene_info$cat <- rownames(gene_info)
+
+gene_info$Change <- ifelse(gene_info$cat %in% c("HD", "MHD", "LD", "MLD"), "Decreased", "Increased") 
+  
+
+```
+
+
+# No Noise vs SNR = 5
+
+```{r, fig.width= 5, fig.height=4}
+library(RColorBrewer)
+library(ggpubr)
+p <- ggbarplot(gene_info, x = "cat", y = "Cond1_Cond2", width = 0.5, fill = "Change", color = "black",
+ label = TRUE, lab.col = "black", palette = "Set3", x.text.angle = 45, xlab = "Degree", ylab = "Categorised Gene Number")
+p + theme(legend.position = "right")
+
+
+```
+
+# No Noise vs SNR = 0.5
+
+
+```{r, fig.width= 5, fig.height=4}
+p <- ggbarplot(gene_info, x = "cat", y = "Cond1_Cond3", width = 0.5, fill = "Change", color = "black",
+ label = TRUE, lab.col = "black", palette = "Set3", x.text.angle = 45, xlab = "Degree", ylab = "Categorised Gene Number")
+p + theme(legend.position = "right")
+```
+
+
+
+# No Noise vs SNR = 0.05
+
+
+```{r, fig.width= 5, fig.height=4}
+p <- ggbarplot(gene_info, x = "cat", y = "Cond1_Cond4", width = 0.5, fill = "Change", color = "black",
+ label = TRUE, lab.col = "black", palette = "Set3", x.text.angle = 45, xlab = "Degree", ylab = "Categorised Gene Number")
+p + theme(legend.position = "right")
+```
+
+
+# No Noise vs SNR = 0.005
+
+```{r, fig.width= 5, fig.height=4}
+p <- ggbarplot(gene_info, x = "cat", y = "Cond1_Cond5", width = 0.5, fill = "Change", color = "black",
+ label = TRUE, lab.col = "black", palette = "Set3", x.text.angle = 45, xlab = "Degree", ylab = "Categorised Gene Number")
+p + theme(legend.position = "right")
+```
+
+
+
+
