@@ -1,11 +1,11 @@
 library(h2o)
 h2o.init(nthreads = -1) 
 
-dl_n <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\ann_valid_fi.RDS\\dl_grid_no_model_4")
-dl_s <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_5.rds\\dl_grid_5_model_4")
-dl_m <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_0.5.rds\\dl_grid_0.5_model_4")
-dl_l <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_0.05.rds\\dl_grid_0.05_model_4")
-dl_xl <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\noise_ifn_ann_0.005.rds\\dl_grid_0.005_model_1")
+dl_n <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\ann_valid_fi.RDS\\dl_grid_no_model_4")
+dl_s <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\noise_ifn_ann_5.rds\\dl_grid_5_model_4")
+dl_m <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\noise_ifn_ann_0.5.rds\\dl_grid_0.5_model_4")
+dl_l <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\noise_ifn_ann_0.05.rds\\dl_grid_0.05_model_4")
+dl_xl <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\noise_ifn_ann_0.005.rds\\dl_grid_0.005_model_1")
 
 
 
@@ -189,7 +189,7 @@ sub3<- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond4" )
 ggplot(sub3, aes(x = gene_name, y = abs(value), fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+theme(axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -202,7 +202,7 @@ sub4<- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond5" )
 ggplot(sub4, aes(x = gene_name, y = abs(value), fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+  theme( axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -216,7 +216,7 @@ sub5 <- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond2", value >0 )
 ggplot(sub5, aes(x = gene_name, y = abs(value), fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+theme( axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -227,7 +227,7 @@ sub6 <- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond3", value >0 )
 ggplot(sub6, aes(x = gene_name, y = abs(value), fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+theme( axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -239,7 +239,7 @@ sub7 <- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond2", value <0 )
 ggplot(sub7, aes(x = gene_name, y = value, fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+  theme( axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -251,7 +251,7 @@ sub8 <- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond3", value <0 )
 ggplot(sub8, aes(x = gene_name, y = value, fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+theme(axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -262,7 +262,7 @@ sub9<- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond4", value >0)
 ggplot(sub9, aes(x = gene_name, y = value, fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+  theme(axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -274,7 +274,7 @@ sub10<- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond4", value < 0)
 ggplot(sub10, aes(x = gene_name, y = value, fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+  theme(axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -285,7 +285,7 @@ sub11<- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond5", value >0)
 ggplot(sub11, aes(x = gene_name, y = abs(value), fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+  theme(axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +
@@ -297,7 +297,7 @@ sub11<- melted_data %>% filter(variable == "Pct_Change_Cond1_Cond5", value <0)
 ggplot(sub11, aes(x = gene_name, y = value, fill = variable)) +
   geom_bar(stat = "identity", position = "dodge") +
   theme_minimal() +  
-  axis.text.x = element_blank(),  
+  theme(axis.text.x = element_blank(),  
 axis.ticks.x = element_blank()  
 )+
   labs(y = "Importance Score", fill = "Condition") +

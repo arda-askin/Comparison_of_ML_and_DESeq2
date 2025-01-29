@@ -175,7 +175,7 @@ infg_gene_set <- c("RG1","RG2","RG3","RG4","RG5","RG6","RG7","RG8","RG9","RG10",
 xgb_model <- readRDS("./all_models/rncolin_xgb_final.RDS")
 rf_model<- readRDS("./all_models/rncolin_rf_final.RDS")
 glmnet_model <- readRDS("./all_models/rncolin_glmnet_final.RDS")
-ann_model_1 <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\rncolin_ann_fmod.rds\\dl_grid_co_model_4")
+ann_model_1 <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\rncolin_ann_fmod.rds\\dl_grid_co_model_4")
 
 
 ```

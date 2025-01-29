@@ -32,7 +32,7 @@ h2o.init(nthreads = -1)
 xgb_model <- readRDS("./all_models/xgb_valid_final.RDS")
 rf_model<- readRDS("./all_models/rf_valid_final.RDS")
 glmnet_model <- readRDS("./all_models/glmnet_valid_final.RDS")
-ann_model_1 <- h2o.loadModel("C:\\EKIZ_LAB\\all_models\\ann_valid_fi.RDS\\dl_grid_no_model_4")
+ann_model_1 <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\ann_valid_fi.RDS\\dl_grid_no_model_4")
 
 
 

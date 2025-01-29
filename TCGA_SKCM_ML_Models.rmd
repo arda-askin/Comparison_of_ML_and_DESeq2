@@ -394,8 +394,6 @@ search_criteria <- list(strategy = "RandomDiscrete",
   
   h2o.saveModel(best_ann,"TCGA_SKCM_ann_model_vsd.rds")
   
-    #"C:\\EKIZ_LAB\\ML_Performance\\Models\\TCGA_SKCM_model\\TCGA_SKCM_ann_model_vsd.rds\\dl_grid_model_1"
-  
   # variable importance
   
   varimp <- h2o.varimp(best_ann)
