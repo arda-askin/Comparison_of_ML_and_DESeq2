@@ -649,7 +649,7 @@ h2o.saveModel(best_ann,"ann_valid_final.RDS")
 
 ```{r}
 
-best_ann <- h2o.loadModel("F:\\EKIZ_LAB\\ML_Performance\\Models\\TCGA_SKCM_model\\ann_valid.RDS\\dl_grid_model_4")
+best_ann <- h2o.loadModel("F:\\ML_Performance\\Models\\TCGA_SKCM_model\\ann_valid.RDS\\dl_grid_model_4")
 
 
 ```
