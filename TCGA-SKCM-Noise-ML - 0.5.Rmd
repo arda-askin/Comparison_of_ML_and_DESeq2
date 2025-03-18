@@ -1,0 +1,749 @@
+---
+title: "TCGA-BRCA-SIM-ML"
+output: html_document
+date: "2024-07-09"
+---
+
+
+# noise addition function
+
+```{r}
+require(dplyr)
+
+noise_adder <- function(data, snr) {
+ 
+# browser()
+    
+numeric_col = data %>% select(where(is.numeric))
+   
+col_mean <- data.frame(colmeans = colMeans(numeric_col))  
+  
+col_mean$SNR = abs(col_mean$colmeans / snr)
+
+col_mean$gene <- rownames(col_mean)
+  
+for(i in colnames(data)) {
+
+index = which(col_mean$gene == i)  
+  
+sd = col_mean$SNR[index]  
+  
+if (is.numeric(data[[i]]) == T){
+set.seed(23)
+data[[i]] <- data[[i]] + rnorm(length(data[[i]]), mean = 0, sd = sd) 
+     }
+
+  
+  }
+
+return(data)
+
+} 
+```
+
+
+# Data Prep
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+
+```
+
+
+
+
+```{r}
+tr_data <- noise_adder(train, 0.5)
+te_data <- noise_adder(test, 0.5)
+
+```
+
+
+
+
+
+
+
+
+```{r}
+library(dplyr)
+
+
+# tr_data <- readRDS("noise_mg_train_col_data.rds")
+
+# tr_c_data <- readRDS("noise_mg_train_vsd.rds")
+
+tr_c_data <- tr_data %>% select(-starts_with("meta."))
+
+tr_data$condition <- factor(tr_data$meta.multiple.bin, levels = rev(levels(tr_data$meta.multiple.bin)))
+
+
+# te_data <- readRDS("noise_mg_test_col_data.rds")
+# 
+# te_c_data <- readRDS("noise_mg_test_vsd.rds")
+
+te_c_data <- te_data %>% select(-starts_with("meta."))
+
+te_data$condition <- factor(te_data$meta.multiple.bin, levels = rev(levels(te_data$meta.multiple.bin)))
+
+# tr_data <- tr_data %>% select(-starts_with("meta."))
+# te_data <- te_data %>% select(-starts_with("meta."))
+
+```
+
+# distribution analysis
+
+```{r}
+# library(Hmisc)
+# 
+# quartile_calculator <- function(data, noisy_data ){
+#  # browser()
+#  # set.seed(seed)
+#  # noisy_data <- data.frame(round(jitter(as.matrix(data), factor = factor)))
+#  # noisy_data 
+#  df1 <- data
+#  df2 <- as.data.frame(noisy_data)
+#  correlation_results <- list()   
+#    # Loop through each column
+#  for (col in colnames(df1)) {
+#    # Calculate correlation and p-value
+#    correlation_test <- rcorr(df1[[col]], df2[[col]], type = "pearson")
+#    
+#    # Extract correlation coefficient and p-value
+#    corr_coeff <- abs(correlation_test$r[1, 2])
+#    p_value <- correlation_test$P[1, 2]
+#    
+#    # Determine the quartile of the correlation coefficient
+#    
+#    if(corr_coeff != "NaN") {
+#       if (corr_coeff >= 0.75) {
+#      quartile <- "fourth"
+#    } else if (corr_coeff >= 0.50) {
+#      quartile <- "third"
+#    } else if (corr_coeff >= 0.25) {
+#      quartile <- "second"
+#    } else if (corr_coeff <= 0.25){
+#      quartile <- "first"
+#    }
+#      
+#    }
+#    
+#    
+#    # Determine if the correlation is significant
+#    
+#    if(p_value != "NaN") {
+#       significance <- ifelse(p_value < 0.05, "significant", "non-significant")
+#    }
+#    
+#    # Store the results in a data frame
+#    
+#    if(significance == "significant") {
+#        
+#      correlation_results[[col]] <- data.frame(
+#      Column = col,
+#      Correlation = corr_coeff,
+#      PValue = p_value,
+#      Quartile = quartile
+#    )
+#      
+#    }
+#    
+#    }
+#  
+#  # Combine all results into a single data frame
+#  correlation_df <- do.call(rbind, correlation_results)
+#  
+#  correlation_df <- filter(correlation_df, correlation_df$PValue != "NaN")
+#  
+#  correlation_df$Quartile <- as.factor(correlation_df$Quartile)
+#  # 
+#  # first_q = as.numeric(summary(correlation_df$Quartile)["first"])
+#  # second_q = as.numeric(summary(correlation_df$Quartile)["second"])
+#  # third_q = as.numeric(summary(correlation_df$Quartile)["third"])
+#  # fourth_q = as.numeric(summary(correlation_df$Quartile)["fourth"])
+#  # 
+#  # q_data = data.frame(
+#  #   first_q = first_q,
+#  #   third_q = third_q,
+#  #   second_q = second_q,
+#  #   fourth_q = fourth_q,
+#  #   factor = factor
+#  # )
+#  
+#  return(correlation_df)
+#  
+# }
+# 
+# # example
+# library(Hmisc)
+# a = quartile_calculator(data = tr_copy, tr_c_data)
+# 
+# a = quartile_calculator(data = te_copy, te_c_data)
+# 
+# 
+# library(openxlsx)
+# 
+# write.xlsx(a, "noise_dist.xlsx")
+# 
+# a = read.xlsx("noise_dist.xlsx")
+# 
+# summary(as.factor(a$Quartile))
+
+```
+
+
+## common gene
+
+```{r}
+library(msigdbr)
+
+infg_gene_sets = msigdbr(species = "human", category = "H")
+
+infg_gene_sets = infg_gene_sets %>%  filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+sum(duplicated(infg_gene_sets$gene_symbol))
+
+infg_gene_sets = infg_gene_sets[!duplicated(infg_gene_sets$gene_symbol), ]
+
+infg_gene_set = infg_gene_sets$gene_symbol
+
+infg_gene_set <- gsub("\\-| ", ".", infg_gene_set)
+```
+
+
+
+## xgboost model
+
+```{r}
+library(doParallel)
+
+n_cores <- detectCores()
+n_cores
+
+# Register cluster
+cluster <- makeCluster(n_cores - 1)
+registerDoParallel(cluster)
+
+# stopCluster(cl = cluster)
+
+library(caret)
+
+control <- trainControl(method='repeatedcv', 
+                        number=10, 
+                        # repeats=3, ## it can be used when performance is poor 
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+set.seed(50)
+
+xgb_model = train(x = tr_c_data, 
+              y = tr_data$condition, 
+              method = "xgbTree", 
+              trControl = control)
+
+
+
+saveRDS(xgb_model, "noise_ifn_xgb_0.005.RDS")
+
+
+xgb_model <- xgb_model_coarse
+
+# Model Performance 
+
+# For Train Data Set 
+
+library(pROC)
+
+xgb_roc <- roc(tr_data$condition, 
+            predict(xgb_model, tr_data, type = "prob")[,1], 
+            levels = rev(levels(tr_data$condition)))
+
+xgb_p <- plot(xgb_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+library(pROC)
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+plot(xgbImp, top = 20, )
+xgbImp_d$gene <- rownames(xgbImp_d)
+rownames(xgbImp_d) <- NULL
+xgbImp_d$order <- order(xgbImp_d$Overall, decreasing = T)
+xgb_selected_gene_imp_inf <- xgbImp_d %>% filter(xgbImp_d$gene %in% infg_gene_set)
+
+# For Test Data Set 
+
+
+xgb_roc <- roc(te_data$condition, 
+            predict(xgb_model, te_data, type = "prob")[,1], 
+            levels = rev(levels(te_data$condition)))
+
+xgb_p <- plot(xgb_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+
+# Confusion Matrix 
+
+xgb_predicted = predict(xgb_model,te_c_data)
+
+confusionMatrix(xgb_predicted, te_data$condition)
+
+
+
+
+```
+
+```{r}
+train_control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        # repeats=3, ## it can be used when performance is poor 
+                        search = 'grid',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE,
+                        allowParallel = TRUE,
+                        verboseIter = TRUE)
+
+
+tune_grid_coarse <- expand.grid(nrounds = seq(300, 1000, by = 50),
+                                max_depth = seq(3, 9, by = 1),
+                                eta = c(0.1, 0.3),
+                                gamma = c(0, 1),
+                                colsample_bytree = c(0.5, 1),
+                                min_child_weight = c(1, 10),
+                                subsample = c(0.1, 1))
+
+# tune_grid_refined <- expand.grid(nrounds = seq(100, 1000, by = 50),  # Narrower steps
+#                                  max_depth = seq(1, 10, by = 1),
+#                                  eta = seq(0.1, 1, by = 0.1),
+#                                  gamma = seq(0.1, 1, by = 0.1),
+#                                  colsample_bytree = seq(0.1, 1, by = 0.1),
+#                                  min_child_weight = seq(1, 10, by = 1),
+#                                  subsample = seq(0.1, 1, by = 0.1))
+
+
+
+
+# # Coarse grid with larger step sizes to save computation
+# tune_grid_coarse <- expand.grid(
+#   nrounds = seq(50, 150, by = 50),          # Fewer boosting rounds due to size
+#   max_depth = seq(3, 7, by = 2),            # Moderate depth to control complexity
+#   eta = c(0.05, 0.1),                       # Low learning rate for stability
+#   gamma = c(0, 0.1, 0.2),                   # Regularization to avoid overfitting
+#   colsample_bytree = c(0.3, 0.5, 0.7),      # Smaller fraction to manage feature size
+#   min_child_weight = c(10, 30, 50),         # Higher values to reduce overfitting
+#   subsample = c(0.6, 0.8)                   # Fraction of samples per boosting round
+# )
+
+set.seed(123)
+xgb_model_coarse <- train(x = tr_c_data, 
+              y = tr_data$condition, 
+                          method = "xgbTree",
+                          trControl = train_control,
+                          tuneGrid = tune_grid_coarse)
+
+# Print the best parameters from refined search
+print(xgb_model_refined$bestTune)
+
+saveRDS(xgb_model, "noise_mg_xgb_.20_grid_1.RDS")
+
+```
+
+
+
+## random forest model
+
+```{r}
+library(caret)
+
+control <- trainControl(method='repeatedcv', 
+                        number=10, 
+                        # repeats=3,
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+
+set.seed(50)
+rf_model <- train(x = tr_c_data, 
+              y = tr_data$condition, 
+                   method = 'rf',
+                   metric = 'Accuracy',
+                   # tuneLength  = 15, 
+                   trControl = control)
+
+# Model Performance 
+
+# For Train
+
+library(MLeval)
+
+x <- evalm(rf_model)
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+rfImp_d <- rfImp_d %>% filter(!Overall == 0) %>% round(5)
+plot(rfImp, top = 20, )
+rfImp_d$gene <- rownames(rfImp_d)
+rownames(rfImp_d) <- NULL
+rfImp_d <- rfImp_d %>%  arrange(desc(Overall))
+rfImp_d$order <- order(rfImp_d$Overall, decreasing = T)
+rf_selected_gene_imp_inf <- rfImp_d %>% filter(rfImp_d$gene %in% infg_gene_set)
+
+
+# For Test 
+
+library(pROC)
+
+rf_roc <- roc(te_data$condition, 
+            predict(rf_model, te_c_data, type = "prob")[,1], 
+            levels = levels(te_data$condition))
+rf_roc
+
+plot(rf_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+# Confusion Matrix 
+
+rf_predicted = predict(rf_model, te_c_data)
+
+confusionMatrix(rf_predicted, te_data$condition)
+
+
+saveRDS(rf_model, "noise_ifn_rf_0.005.RDS")
+
+
+```
+
+
+# SVM Model
+
+```{r}
+library(caret)
+
+
+# control <- trainControl(method='repeatedcv', 
+#                         number=5, 
+#                         repeats=5,
+#                         search = 'random',
+#                          allowParallel = TRUE,
+#                         savePredictions = TRUE, 
+#                         classProbs = TRUE, 
+#                         verboseIter = TRUE)
+
+control <- trainControl(method='repeatedcv', 
+                        number=10, 
+                        # repeats=3, ## it can be used when performance is poor 
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+set.seed(50)
+svmRadialWeights_model <- train(x = tr_c_data, 
+              y = tr_data$condition, 
+                   method = 'svmRadialWeights',
+                   metric = 'Accuracy',
+                   tuneLength  = 15,
+                   trControl = control)
+
+svmRadialWeights_model <- readRDS("noise_mg_svm_5.rds")
+
+
+library(MLeval)
+
+x_svm <- evalm(svmRadialWeights_model, positive = "Low")
+
+
+svmImp <- varImp(svmRadialWeights_model, scale = T)
+svmImp_d <- data.frame(svmImp$importance)
+svmImp_d <- svmImp_d %>% filter(!(High == 0 & Low == 0))
+svmImp_d$genes <- rownames(svmImp_d)
+plot(svmImp, top = 20)
+svmImp_d$gene <- rownames(svmImp_d)
+rownames(svmImp_d) <- NULL
+svmImp_d <- svmImp_d %>%  arrange(desc(High))
+svmImp_d$order <- order(svmImp_d$High, decreasing = T)
+svm_selected_gene_imp_inf <- svmImp_d %>% filter(svmImp_d$gene %in% infg_gene_set)
+
+svm_selected_gene_imp_inf2 <-svm_selected_gene_imp_inf
+svmImp_d2 <- svmImp_d
+
+saveRDS(svmRadialWeights_model, "noise_ifn_svm_5.RDS")
+
+
+svm_predicted = predict(svmRadialWeights_model, tr_c_data)
+
+confusionMatrix(svm_predicted, tr_data$condition)
+
+svm_predicted = predict(svmRadialWeights_model, te_c_data)
+
+confusionMatrix(svm_predicted, te_data$condition)
+
+library(pROC)
+
+svm_roc <- roc(tr_data$condition, 
+            predict(svmRadialWeights_model, tr_c_data, type = "prob")[,1], 
+            levels = rev(levels(tr_data$condition)))
+svm_roc
+
+plot(svm_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+svm_roc <- roc(te_data$condition, 
+            predict(svmRadialWeights_model, te_c_data, type = "prob")[,1], 
+            levels = rev(levels(te_data$condition)))
+svm_roc
+
+plot(svm_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+
+
+```
+
+```{r}
+# Load necessary libraries
+library(caret)
+library(kernlab)
+
+# Create a sample dataset (for demonstration)
+
+
+# Define the control function for cross-validation
+train_control <- trainControl(method = "cv",  # Cross-validation
+                              number = 5,     # Number of folds
+                              search = "grid",
+                              savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE) # Grid search
+
+# Define the tuning grid with a wider range
+tune_grid <- expand.grid(C = 2^seq(-5, 15, by = 2),         # Cost parameter from 2^-5 to 2^15
+                         sigma = 2^seq(-15, 3, by = 2),     # Sigma parameter from 2^-15 to 2^3
+                         Weight = 1)                        # Default weight (adjust if necessary)
+
+# Train the model using the caret train function
+set.seed(50)
+svm_model <- train(x = tr_c_data, 
+              y = tr_data$condition,
+                   method = "svmRadialWeights",
+                   trControl = train_control,
+                   tuneGrid = tune_grid)
+
+# Output the best model and results
+print(svm_model)
+
+saveRDS(svm_model, "noise_mg_svm_.20_grid.rds")
+
+```
+
+
+
+
+# GLMNET Model
+
+```{r}
+library(caret)
+
+
+control <- trainControl(method='repeatedcv', 
+                        number=10, 
+                        # repeats=3,
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+set.seed(50)
+glmnet_model <- train(x = tr_c_data, 
+              y = tr_data$condition,
+                   method = 'glmnet',
+                   metric = 'Accuracy',
+                   family = "binomial",
+                   # tuneLength  = 15,
+                   trControl = control)
+
+library(MLeval)
+
+x_glmnet <- evalm(glmnet_model)
+
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+plot(glmnetImp, top = 20)
+glmnetImp_d$gene <- rownames(glmnetImp_d)
+rownames(glmnetImp_d) <- NULL
+glmnetImp_d <- glmnetImp_d%>%  arrange(desc(Overall))
+glmnetImp_d$order <- order(glmnetImp_d$Overall, decreasing = T)
+glmnet_selected_gene_imp_inf <- glmnetImp_d %>% filter(glmnetImp_d$gene %in% infg_gene_set)
+
+glmnet_predicted = predict(glmnet_model, te_c_data)
+confusionMatrix(glmnet_predicted, te_data$condition)
+
+library(pROC)
+
+glmnet_roc <- roc(te_data$condition, 
+            predict(glmnet_model, te_c_data, type = "prob")[,1], 
+            levels = rev(levels(te_data$condition)))
+glmnet_roc
+
+plot(glmnet_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+saveRDS(glmnet_model, "noise_ifn_glmnet_0.005.rds")
+
+
+```
+
+```{r}
+# library(dplyr)
+
+# te_c_data$meta_patient <- rownames(te_c_data)
+# te_data <- select(te_data, -meta_multiple_bin)
+# te_data$meta_patient <- rownames(te_data)
+# te_data <- full_join(te_c_data, te_data, by = "meta_patient")
+# rownames(te_data) <- te_data[["meta_patient"]]
+# te_data <- select(te_data, -meta_patient)
+# 
+# tr_c_data$meta_patient <- rownames(tr_c_data)
+# tr_data <- select(tr_data, -meta_multiple_bin)
+# tr_data$meta_patient <- rownames(tr_data)
+# tr_data <- full_join(tr_c_data, tr_data, by = "meta_patient")
+# rownames(tr_data) <- tr_data[["meta_patient"]]
+# tr_data <- select(tr_data, -meta_patient)
+
+
+tr_data <- tr_data %>% select(-starts_with("meta."))
+te_data <- te_data %>% select(-starts_with("meta."))
+
+
+
+library(h2o)
+
+h2o.init(nthreads = -1) 
+
+train.hex <- as.h2o(tr_data)
+test.hex <- as.h2o(te_data)
+
+```
+
+
+```{r}
+
+hyper_params <- list(
+                     activation = c("Rectifier", "Maxout", "Tanh", "RectifierWithDropout", "MaxoutWithDropout", "TanhWithDropout"), 
+                     hidden = list(c(5, 5, 5, 5, 5), c(10, 10, 10, 10), c(50, 50, 50), c(100, 100, 100)),
+                     epochs = c(50, 100, 200),
+                     l1 = c(0, 0.00001, 0.0001), 
+                     l2 = c(0, 0.00001, 0.0001),
+                     rate = c(0, 01, 0.005, 0.001),
+                     rate_annealing = c(1e-8, 1e-7, 1e-6),
+                     rho = c(0.9, 0.95, 0.99, 0.999),
+                     epsilon = c(1e-10, 1e-8, 1e-6, 1e-4),
+                     momentum_start = c(0, 0.5),
+                     momentum_stable = c(0.99, 0.5, 0),
+                     input_dropout_ratio = c(0, 0.1, 0.2),
+                     max_w2 = c(10, 100, 1000, 3.4028235e+38)
+                     )
+
+
+
+search_criteria <- list(strategy = "RandomDiscrete", 
+                        max_models = 100,
+                        max_runtime_secs = 900,
+                        stopping_tolerance = 0.001,
+                        stopping_rounds = 15,
+                        seed = 42)
+
+ y = grep("condition", colnames(tr_data))
+  
+ x = 1:(y-1)
+ 
+ dl_grid_0.5 <- h2o.grid(algorithm = "deeplearning", 
+                    x = x,
+                    y = y,
+                    # weights_column = weights,
+                    grid_id = "dl_grid_0.5",
+                    training_frame = train.hex,
+                    validation_frame = test.hex,
+                    nfolds = 10,                           
+                    fold_assignment = "Stratified",
+                    hyper_params = hyper_params,
+                    search_criteria = search_criteria,
+                    seed = 42
+                    ,keep_cross_validation_predictions=TRUE
+                    ,keep_cross_validation_fold_assignment=TRUE
+                    ,variable_importances = T
+                    )
+
+ 
+
+  gridperf_0.5 <- h2o.getGrid(grid_id = "dl_grid_0.5",
+                             sort_by = "auc",
+                             decreasing = TRUE)
+ 
+  print(gridperf2)
+  summary(gridperf2)
+  
+  best_ann <- h2o.getModel(gridperf_0.5@model_ids[[1]])
+  
+  h2o.saveModel(best_ann,"noise_ifn_ann_0.05.rds")
+  
+#"C:\\TCGA_SKCM_model\\noise_ifn_ann_0.05.rds\\dl_grid_0.5_model_4"
+  
+  varimp <- h2o.varimp(best_ann)
+  
+  varimp_d <- as.data.frame(varimp)
+  
+  
+  perf2 <- h2o.performance(best_ann, valid = TRUE)
+ 
+  h2o.auc(best_ann, valid = T)
+  plot(perf2, type = "roc")
+  
+  source("h2o_imp_var.R")
+  
+  h2o_imp_var(best_ann)
+ 
+  
+a <-as.data.frame(predict(best_ann, test.hex))
+  
+table(te_data$condition, a$predict)
+```

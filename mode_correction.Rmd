@@ -1,0 +1,488 @@
+---
+title: "Model_Correction"
+output: html_document
+date: "2025-01-01"
+---
+
+# package loading
+
+```{r, echo=FALSE, , message=FALSE, , warning=FALSE}
+library(dplyr)
+library(caret)
+library(MLeval)
+library(pROC)
+library(edgeR)
+library(pROC)
+library(randomForest)
+library(glmnet)
+library(xgboost)
+
+
+```
+
+# Model Reading
+
+```{r}
+xgb_model <- readRDS("./all_models/xgb_valid_final.RDS")
+rf_model<- readRDS("./all_models/rf_valid_final.RDS")
+glmnet_model <- readRDS("./all_models/glmnet_valid_final.RDS")
+```
+
+# Data Prep
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+
+```
+
+```{r}
+suppressPackageStartupMessages(library(doParallel))
+
+n_cores <- detectCores()
+n_cores
+
+# Register cluster
+cluster <- makeCluster(n_cores - 1)
+registerDoParallel(cluster)
+```
+
+
+
+# Random Forest
+
+```{r}
+best_mtry <- rf_model$finalModel$mtry
+best_ntree <-rf_model$finalModel$ntree
+
+set.seed(42)
+rf_manual_model <- randomForest(
+  x = l_tr, 
+  y = train$meta.multiple.bin, 
+  mtry = best_mtry, 
+  ntree = best_ntree
+)
+
+saveRDS(rf_manual_model, "rf_manual_p1.RDS")
+
+rf_manual_predictions <- as.data.frame(predict(rf_manual_model, l_te))
+confusionMatrix(rf_manual_predictions$`predict(rf_manual_model, l_te)`, test$meta.multiple.bin)
+
+rf_manual_predictions <- predict(rf_manual_model, l_te_2)
+manual_accuracy <- mean(rf_manual_predictions == mel_dat$meta.multiple.bin)
+manual_accuracy
+
+
+```
+
+# GLMNet
+
+```{r}
+best_params_glmnet <- glmnet_model$bestTune
+
+train$meta.multiple.bin <- as.numeric(train$meta.multiple.bin) - 1
+test$meta.multiple.bin <- as.numeric(test$meta.multiple.bin) - 1
+mel_dat$meta.multiple.bin  <- as.numeric(mel_dat$meta.multiple.bin) - 1
+
+set.seed(42)
+final_glmnet_model <- glmnet(
+  x = as.matrix(l_tr),
+  y = train$meta.multiple.bin,
+  alpha = best_params_glmnet$alpha,
+  lambda = best_params_glmnet$lambda,
+   family = "binomial"
+)
+
+glmnet_preds <- predict(final_glmnet_model, as.matrix(l_te), 
+  type = "response")
+
+glmnet_class_preds <- as.data.frame(ifelse(glmnet_preds > 0.5, 1, 0))
+
+
+glmnet_class_preds$s0 <- factor(glmnet_class_preds$s0, levels = c(0, 1))
+test$meta.multiple.bin <- factor(test$meta.multiple.bin, levels = c(0, 1))
+
+
+confusionMatrix(glmnet_class_preds$s0,test$meta.multiple.bin )
+
+
+
+glmnet_preds <- predict(final_glmnet_model, as.matrix(l_te_2), 
+  type = "response")
+
+glmnet_class_preds <- as.data.frame(ifelse(glmnet_preds > 0.5, 1, 0))
+
+
+glmnet_class_preds$s0 <- factor(glmnet_class_preds$s0, levels = c(0, 1))
+mel_dat$meta.multiple.bin <- factor(mel_dat$meta.multiple.bin, levels = c(0, 1))
+
+
+confusionMatrix(glmnet_class_preds$s0,mel_dat$meta.multiple.bin )
+
+
+
+```
+
+# XGBOOST
+
+```{r}
+best_params_xgb <- xgb_model$bestTune
+
+params <- list(
+  objective = "binary:logistic",
+  eta = best_params_xgb$eta,
+  max_depth = best_params_xgb$max_depth,
+  gamma = best_params_xgb$gamma,
+  colsample_bytree = best_params_xgb$colsample_bytree,
+  min_child_weight = best_params_xgb$min_child_weight,
+  subsample = best_params_xgb$subsample
+)
+
+
+final_xgb_model <- xgboost(
+  params = params,
+  data = as.matrix(l_tr),
+  label = train$meta.multiple.bin,
+  nrounds = best_params_xgb$nrounds,
+  verbose = 0
+)
+
+
+xgb_preds <- predict(final_xgb_model, as.matrix(l_te))
+xgb_class_preds <- as.data.frame(ifelse(xgb_preds > 0.5, 1, 0))
+
+xgb_class_preds[,1] <- factor(xgb_class_preds[,1], levels = c(0, 1))
+test$meta.multiple.bin <- factor(test$meta.multiple.bin, levels = c(0, 1))
+
+confusionMatrix(factor(xgb_class_preds[,1]), factor(test$meta.multiple.bin))
+
+
+
+xgb_preds <- predict(final_xgb_model, as.matrix(l_te_2))
+xgb_class_preds <- as.data.frame(ifelse(xgb_preds > 0.5, 1, 0))
+
+xgb_class_preds[,1] <- factor(xgb_class_preds[,1], levels = c(0, 1))
+mel_dat$meta.multiple.bin <- factor(mel_dat$meta.multiple.bin, levels = c(0, 1))
+
+confusionMatrix(factor(xgb_class_preds[,1]), factor(mel_dat$meta.multiple.bin))
+
+
+
+
+```
+
+
+## Cross validation
+
+# Data Set Prep.
+
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+l_dat <- readRDS("skcm_ready.RDS")
+l_dat$meta.multiple.bin <- factor(l_dat$meta.multiple.bin, levels = c("Low", "High"))
+mel_dat$meta.multiple.bin <- factor(mel_dat$meta.multiple.bin, levels = c("Low", "High"))
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+l_dat$meta.multiple.bin  <- as.numeric(l_dat$meta.multiple.bin) - 1
+mel_dat$meta.multiple.bin  <- as.numeric(mel_dat$meta.multiple.bin) - 1
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+mel_dat$meta.multiple.bin <- factor(mel_dat$meta.multiple.bin, levels = c(0, 1))
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+
+set_seeds <- c(12, 25, 37, 48, 124, 257, 478, 780, 1200, 2500)
+
+cv_data_test <- list()
+cv_c_data_test <- list()
+cv_data_train <- list()
+cv_c_data_train <- list()
+
+for(i in 1:10){
+  
+  set.seed(set_seeds[i])
+  trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+  
+  train <- l_dat[ trainIndex,]
+  test <- l_dat[-trainIndex,]
+  l_tr <- train %>% select(-starts_with("meta."))
+  l_te <- test %>% select(-starts_with("meta."))
+  
+  cv_data_test[[paste("cv",i, sep ="_")]] <- test
+  cv_c_data_test[[paste("cv",i, sep ="_")]] <- l_te
+  cv_data_train[[paste("cv",i, sep ="_")]] <- train
+  cv_c_data_train[[paste("cv",i,sep = "_")]] <- l_tr
+  
+  
+}
+
+```
+
+# Random Forest
+
+```{r}
+best_mtry <- rf_model$finalModel$mtry
+best_ntree <-rf_model$finalModel$ntree
+
+rf_manuel_models <- list()
+
+for (i in 1:10) {
+  set.seed(42)
+  rf_manuel_model <- randomForest(
+  x = cv_c_data_train[[i]], 
+  y =as.factor(cv_data_train[[i]]$meta.multiple.bin), 
+  mtry = best_mtry, 
+  ntree = best_ntree
+)
+
+  rf_manuel_models[[paste("model",i, sep ="_")]] <- rf_manuel_model
+  
+  print(paste0("Model", i, "finished", collapse = " "))
+  
+}
+
+
+saveRDS(rf_manuel_models, "rf_manuel_models.RDS")
+
+
+
+rf_manual_predictions <- as.data.frame(predict(rf_manual_models[[1]], l_te_2))
+confusionMatrix(rf_manual_predictions$`predict(rf_manual_model, l_te)`, test$meta.multiple.bin)
+
+rf_manual_predictions <- predict(rf_manual_model, l_te_2)
+manual_accuracy <- mean(rf_manual_predictions == mel_dat$meta.multiple.bin)
+manual_accuracy
+
+
+accuracy_list <- list()
+
+for (i in 1:10) {
+  
+rf_manual_predictions <- data.frame(p = predict(rf_manuel_models[[i]], cv_c_data_test[[i]]))
+confusion <- confusionMatrix(rf_manual_predictions$p , as.factor(cv_data_test[[i]]$meta.multiple.bin))
+
+accuracy <- round(confusion$overall['Accuracy'], digits = 4)
+    
+
+accuracy_list[[paste("model",i, sep ="_")]] <- accuracy
+  
+}
+
+
+accuracy_list
+
+
+val_accu_list <- list()
+
+for (i in 1:10) {
+  
+rf_manual_predictions <- data.frame(p = predict(rf_manuel_models[[i]], l_te_2))
+confusion <- confusionMatrix(rf_manual_predictions$p , as.factor(mel_dat$meta.multiple.bin))
+
+accuracy <- round(confusion$overall['Accuracy'], digits = 4)
+    
+
+val_accu_list[[paste("model",i, sep ="_")]] <- accuracy
+  
+}    
+    
+
+
+val_accu_list
+
+
+```
+
+# GLMNet
+
+```{r}
+best_params_glmnet <- glmnet_model$bestTune
+
+glmnet_manuel_models <- list()
+
+for (i in 1:10) {
+set.seed(42)
+final_glmnet_model <- glmnet(
+  x = as.matrix(cv_c_data_train[[i]]),
+  y = cv_data_train[[i]]$meta.multiple.bin,
+  alpha = best_params_glmnet$alpha,
+  lambda = best_params_glmnet$lambda,
+   family = "binomial"
+)
+  glmnet_manuel_models[[paste("model",i, sep ="_")]] <- final_glmnet_model
+  
+}
+
+
+saveRDS(glmnet_manuel_models, "glmnet_manuel_models.RDS")
+
+accuracy_list <- list()
+
+for (i in 1:10) {
+  
+glmnet_preds <- predict(glmnet_manuel_models[[i]], as.matrix(cv_c_data_test[[i]]), 
+  type = "response")
+glmnet_class_preds <- as.data.frame(ifelse(glmnet_preds > 0.5, 1, 0))
+glmnet_class_preds$s0 <- factor(glmnet_class_preds$s0, levels = c(0, 1))
+cv_data_test[[i]]$meta.multiple.bin  <- factor(cv_data_test[[i]]$meta.multiple.bin , levels = c(0, 1))
+confusion <- confusionMatrix(glmnet_class_preds$s0,cv_data_test[[i]]$meta.multiple.bin )
+  
+accuracy <- round(confusion$overall['Accuracy'], digits = 4)
+    
+
+accuracy_list[[paste("model",i, sep ="_")]] <- accuracy
+  
+}
+
+
+accuracy_list
+
+
+val_accu_list <- list()
+
+for (i in 1:10) {
+  
+glmnet_preds <- predict(glmnet_manuel_models[[i]], as.matrix(l_te_2), 
+  type = "response")
+glmnet_class_preds <- as.data.frame(ifelse(glmnet_preds > 0.5, 1, 0))
+glmnet_class_preds$s0 <- factor(glmnet_class_preds$s0, levels = c(0, 1))
+confusion <- confusionMatrix(glmnet_class_preds$s0,mel_dat$meta.multiple.bin )
+  
+accuracy <- round(confusion$overall['Accuracy'], digits = 4)
+    
+
+val_accu_list[[paste("model",i, sep ="_")]] <- accuracy
+  
+}    
+    
+
+
+val_accu_list
+
+```
+
+
+# XGBOOST
+
+```{r}
+best_params_xgb <- xgb_model$bestTune
+
+params <- list(
+  objective = "binary:logistic",
+  eta = best_params_xgb$eta,
+  max_depth = best_params_xgb$max_depth,
+  gamma = best_params_xgb$gamma,
+  colsample_bytree = best_params_xgb$colsample_bytree,
+  min_child_weight = best_params_xgb$min_child_weight,
+  subsample = best_params_xgb$subsample
+)
+
+
+xgb_manuel_models <- list()
+
+for (i in 1:10) {
+set.seed(42)
+xgb_model <- xgboost(
+  params = params,
+  data = as.matrix(cv_c_data_train[[i]]),
+  label = cv_data_train[[i]]$meta.multiple.bin,
+  nrounds = best_params_xgb$nrounds,
+  verbose = 0
+)
+
+  xgb_manuel_models[[paste("model",i, sep ="_")]] <- xgb_model
+  
+}
+
+
+saveRDS(xgb_manuel_models, "xgb_manuel_models.RDS")
+
+
+
+
+xgb_preds <- predict(final_xgb_model, as.matrix(l_te_2))
+xgb_class_preds <- as.data.frame(ifelse(xgb_preds > 0.5, 1, 0))
+
+xgb_class_preds[,1] <- factor(xgb_class_preds[,1], levels = c(0, 1))
+mel_dat$meta.multiple.bin <- factor(mel_dat$meta.multiple.bin, levels = c(0, 1))
+
+confusionMatrix(factor(xgb_class_preds[,1]), factor(mel_dat$meta.multiple.bin))
+
+
+accuracy_list <- list()
+
+for (i in 1:10) {
+xgb_preds <- predict(xgb_manuel_models[[i]], as.matrix(cv_c_data_test[[i]]))
+xgb_class_preds <- as.data.frame(ifelse(xgb_preds > 0.5, 1, 0))
+xgb_class_preds[,1] <- factor(xgb_class_preds[,1], levels = c(0, 1))
+cv_data_test[[i]]$meta.multiple.bin  <- factor(cv_data_test[[i]]$meta.multiple.bin , levels = c(0, 1))
+confusion <-confusionMatrix(factor(xgb_class_preds[,1]), factor(cv_data_test[[i]]$meta.multiple.bin))
+
+accuracy <- round(confusion$overall['Accuracy'], digits = 4)
+    
+accuracy_list[[paste("model",i, sep ="_")]] <- accuracy
+  
+}
+
+
+accuracy_list
+
+
+val_accu_list <- list()
+
+for (i in 1:10) {
+  
+xgb_preds <- predict(xgb_manuel_models[[i]], as.matrix(l_te_2))
+xgb_class_preds <- as.data.frame(ifelse(xgb_preds > 0.5, 1, 0))
+xgb_class_preds[,1] <- factor(xgb_class_preds[,1], levels = c(0, 1))
+
+confusion <- confusionMatrix(xgb_class_preds[,1],mel_dat$meta.multiple.bin )
+  
+accuracy <- round(confusion$overall['Accuracy'], digits = 4)
+    
+
+val_accu_list[[paste("model",i, sep ="_")]] <- accuracy
+  
+}    
+    
+
+
+val_accu_list
+
+```
+
+
+
+
+

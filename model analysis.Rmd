@@ -1,0 +1,199 @@
+---
+title: "Model_Analysis"
+output: html_document
+date: "2024-12-31"
+---
+
+```{r}
+library(dplyr)
+```
+
+
+
+```{r}
+xgb_n <- readRDS("./all_models/xgb_valid_final.RDS")
+xgb_s <- readRDS("./all_models/noise_ifn_xgb_5.RDS")
+xgb_m <- readRDS("./all_models/noise_ifn_xgb_0.5.RDS")
+xgb_l <- readRDS("./all_models/noise_ifn_xgb_0.05.RDS")
+xgb_xl <- readRDS("./all_models/noise_ifn_xgb_0.005.RDS")
+
+```
+
+```{r}
+rf_n <- readRDS("./all_models/rf_valid_final.RDS")
+rf_s <- readRDS("./all_models/noise_ifn_rf_5.RDS")
+rf_m <- readRDS("./all_models/noise_ifn_rf_0.5.RDS")
+rf_l <- readRDS("./all_models/noise_ifn_rf_0.05.RDS")
+rf_xl <- readRDS("./all_models/noise_ifn_rf_0.005.RDS")
+```
+
+```{r}
+glmnet_n <- readRDS("./all_models/glmnet_valid_final.RDS")
+glmnet_s <- readRDS("./all_models/noise_ifn_glmnet_5.RDS")
+glmnet_m <- readRDS("./all_models/noise_ifn_glmnet_0.5.RDS")
+glmnet_l <- readRDS("./all_models/noise_ifn_glmnet_0.05.RDS")
+glmnet_xl <- readRDS("./all_models/noise_ifn_glmnet_0.005.RDS")
+```
+
+# # Random Forest
+
+```{r}
+
+rf_plotter <- function(model,text){
+  
+predictions <- model$pred
+
+predictions$models <- paste(predictions$mtry, predictions$Resample)
+
+predictions$models <- as.factor(predictions$models)
+
+
+accuracy_per_fold <- predictions %>%
+  group_by(models) %>%
+  summarise(Accuracy = mean(obs == pred))
+accuracy_per_fold$model_id<- paste0("model", 1:nrow(accuracy_per_fold))
+accuracy_per_fold$model_id <- factor(accuracy_per_fold$model_id, levels = accuracy_per_fold$model_id)
+
+
+accuracy_per_fold$combination <- factor(rep(1:3, each = 10))
+library(RColorBrewer)
+library(ggpubr)
+  
+p <- ggline(accuracy_per_fold, x = "model_id", y = "Accuracy", width = 0.4, color  = "combination", palette = "Set2",
+, lab.col = "black", x.text.angle = 45, ylim = c(0.4,1), title = text)
+
+
+p
+
+
+  
+}
+
+model_list <- list(rf_n = rf_n, rf_s = rf_s, rf_m = rf_m , rf_l = rf_l, rf_xl = rf_xl)
+
+snr <- c("no noise", "SNR = 5", "SNR = 0.5", "SNR = 0.05", "SNR = 0.005")
+
+plot_list <- list()
+
+for(i in 1:5) {
+  
+  p <- rf_plotter(model_list[[i]], paste("Accuracy Plot per Model for ", snr[i]))
+  
+  
+  plot_list[[i]] =  p
+  
+}
+
+plot_list
+
+
+
+```
+
+# XGBoost
+
+```{r}
+xgb_plotter <- function(model,text){
+  
+# browser()  
+  
+predictions <- model$pred
+
+predictions$models <- paste(predictions$eta, predictions$max_depth, predictions$max_depth, predictions$gamma, predictions$colsample_bytree, predictions$min_child_weight, predictions$subsample, predictions$nrounds, predictions$Resample)
+
+predictions$models <- as.factor(predictions$models)
+
+
+accuracy_per_fold <- predictions %>%
+  group_by(models) %>%
+  summarise(Accuracy = mean(obs == pred))
+accuracy_per_fold$model_id<- paste0("model", 1:nrow(accuracy_per_fold))
+accuracy_per_fold$model_id <- factor(accuracy_per_fold$model_id, levels = accuracy_per_fold$model_id)
+
+
+accuracy_per_fold$combination <- factor(rep(1:3, each = 10))
+library(RColorBrewer)
+library(ggpubr)
+  
+p <- ggline(accuracy_per_fold, x = "model_id", y = "Accuracy", width = 0.4, color  = "combination", palette = "Set2",
+, lab.col = "black", x.text.angle = 45, ylim = c(0.4,1), title = text)
+
+p
+
+
+  
+}
+
+model_list <- list(xgb_n = xgb_n, xgb_s = xgb_s, xgb_m = xgb_m , xgb_l = xgb_l, xgb_xl = xgb_xl)
+
+snr <- c("no noise", "SNR = 5", "SNR = 0.5", "SNR = 0.05", "SNR = 0.005")
+
+plot_list <- list()
+
+for(i in 1:5) {
+  
+  p <- xgb_plotter(model_list[[i]], paste("Accuracy Plot per Model for ", snr[i]))
+  
+  
+  plot_list[[i]] =  p
+  
+}
+
+plot_list
+
+```
+
+
+
+# GLMNET
+
+```{r}
+
+glmnet_plotter <- function(model,text){
+  
+predictions <- model$pred
+
+predictions$models <- paste(predictions$alpha,predictions$lambda, predictions$Resample)
+
+predictions$models <- as.factor(predictions$models)
+
+
+accuracy_per_fold <- predictions %>%
+  group_by(models) %>%
+  summarise(Accuracy = mean(obs == pred))
+accuracy_per_fold$model_id<- paste0("model", 1:nrow(accuracy_per_fold))
+accuracy_per_fold$model_id <- factor(accuracy_per_fold$model_id, levels = accuracy_per_fold$model_id)
+
+accuracy_per_fold$combination <- factor(rep(1:3, each = 10))
+library(RColorBrewer)
+library(ggpubr)
+  
+p <- ggline(accuracy_per_fold, x = "model_id", y = "Accuracy", width = 0.4, color  = "combination", palette = "Set2",
+, lab.col = "black", x.text.angle = 45, ylim = c(0.4,1), title = text)
+
+
+  
+p
+  
+}
+
+model_list <- list(glmnet_n = glmnet_n, glmnet_s = glmnet_s, glmnet_m = glmnet_m , glmnet_l = glmnet_l, glmnet_xl = glmnet_xl)
+
+snr <- c("no noise", "SNR = 5", "SNR = 0.5", "SNR = 0.05", "SNR = 0.005")
+
+plot_list <- list()
+
+for(i in 1:5) {
+  
+  p <- glmnet_plotter(model_list[[i]], paste("Accuracy Plot per Model for ", snr[i]))
+  
+  
+  plot_list[[i]] =  p
+  
+}
+
+plot_list
+
+
+```
+

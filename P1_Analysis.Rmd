@@ -1,0 +1,1452 @@
+---
+title: "Outlier_Analysis"
+author: Arda Askin
+date: "`r Sys.Date()`"   
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    theme: sandstone
+--- 
+# package loading
+
+```{r, echo=FALSE, , message=FALSE, , warning=FALSE}
+library(dplyr)
+library(caret)
+library(MLeval)
+library(pROC)
+library(h2o)
+library(edgeR)
+library(pROC)
+
+h2o.init(nthreads = -1) 
+
+```
+
+# model loading
+
+```{r, echo=FALSE}
+xgb_model <- readRDS("./all_models/xgb_valid_final.RDS")
+rf_model<- readRDS("./all_models/rf_valid_final.RDS")
+glmnet_model <- readRDS("./all_models/glmnet_valid_final.RDS")
+ann_model_1 <- h2o.loadModel("C:\\TCGA_SKCM_model\\all_models\\ann_valid_fi.RDS\\dl_grid_no_model_4")
+
+
+
+
+## diff expr.
+train_diff_genes <- readRDS("TCGA_SKCM_train_de_genes_IFNG_final.rds") 
+test_diff_genes <- readRDS("TCGA_SKCM_test_de_genes_IFNG_final.rds")  
+
+```
+
+
+#model hyperparameters
+
+```{r}
+
+rf_model$finalModel$ntree
+rf_model$finalModel$mtry
+xgb_model$finalModel$params
+glmnet_model$finalModel$tuneValue
+
+deep_params <- ann_model_1@parameters
+
+params_dt <- as.data.frame(as.list(deep_params))
+
+params_dt <- t(params_dt[1, ])
+
+colnames(params_dt)[1] <- "Value" 
+
+params_dt
+
+```
+
+
+
+# Data Prep
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+
+```
+# Validation Data AUC-ROC Plot
+
+```{r}
+ 
+test_data_response <- mel_dat$meta.multiple.bin
+test_data <- mel_dat
+test_dat <- l_te_2
+ann_model <- ann_model_1
+
+  xgb_roc <- roc(test_data_response, 
+                 predict(xgb_model, test_dat, type = "prob")[,1], 
+                 levels = rev(levels(test_data_response)))
+  rf_roc <- roc(test_data_response, 
+                predict(rf_model, test_dat, type = "prob")[,1], 
+                levels = rev(levels(test_data_response)))
+  
+  glmnet_roc <- roc(test_data_response, 
+                    predict(glmnet_model, test_dat, type = "prob")[,1], 
+                    levels = rev(levels(test_data_response)))
+  
+  test.hex <- as.h2o(test_data)
+  pred <- h2o.predict(ann_model, test.hex)
+  predicted_prob <- as.data.frame(pred)
+  predicted_prob <- predicted_prob$High
+  true_labels <- as.vector(test_data_response)
+  ann_roc <- roc(response = true_labels, predictor = predicted_prob)
+    
+
+  
+  
+
+```
+
+
+```{r,fig.height= 4, fig.width= 4}
+
+plot.roc(ann_roc, las=1, lwd=1.7, col = "#386CB0", xlab=" 1 - specificity")
+
+plot.roc(xgb_roc, add=TRUE, lwd=1.7, col = "#E41A1C")
+
+plot.roc(rf_roc, add=TRUE, lwd=1.7, col = "#7FC97F")
+
+plot.roc(glmnet_roc, add=TRUE, lwd=1.7, col =  "#999999")
+
+
+legend("bottomright", legend = c(paste("Deep Learning", round(auc(ann_roc), 4)), 
+                                 paste("XGBoost", round(auc(xgb_roc), 4)),
+                                 paste("Random Forest", round(auc(rf_roc), 4)), 
+                                 paste("GLMNet", round(auc(glmnet_roc), 4) )), 
+                          lty = c(1, 1, 1, 1), 
+                          col =c("#386CB0", "#E41A1C", "#7FC97F",  "#999999"), cex=0.6, lwd=1.5, inset = 0.05,
+                                  title = "AUC")
+                          par(mfrow = c(1, 1))
+
+
+
+```
+
+# Test Data Set AUC-ROC Plot
+
+
+```{r,fig.height= 4, fig.width= 4}
+test_data_response <- test$meta.multiple.bin
+test_data <- test
+test_dat <- l_te
+ann_model <- ann_model_1
+
+  xgb_roc <- roc(test_data_response, 
+                 predict(xgb_model, test_dat, type = "prob")[,1], 
+                 levels = rev(levels(test_data_response)))
+  rf_roc <- roc(test_data_response, 
+                predict(rf_model, test_dat, type = "prob")[,1], 
+                levels = rev(levels(test_data_response)))
+  
+  glmnet_roc <- roc(test_data_response, 
+                    predict(glmnet_model, test_dat, type = "prob")[,1], 
+                    levels = rev(levels(test_data_response)))
+  
+  test.hex <- as.h2o(test_data)
+  pred <- h2o.predict(ann_model, test.hex)
+  predicted_prob <- as.data.frame(pred)
+  predicted_prob <- predicted_prob$High
+  true_labels <- as.vector(test_data_response)
+  ann_roc <- roc(response = true_labels, predictor = predicted_prob)
+  
+  
+```
+
+
+```{r,fig.height= 4, fig.width= 4}
+plot.roc(ann_roc, las=1, lwd=1.7, col = "#FB8072", xlab=" 1 - specificity")
+
+plot.roc(xgb_roc, add=TRUE, lwd=1.7, col = "#80B1D3")
+
+plot.roc(rf_roc, add=TRUE, lwd=1.7, col = "#B3DE69")
+
+plot.roc(glmnet_roc, add=TRUE, lwd=1.7, col = "#FDB462")
+
+
+legend("bottomright", legend = c(paste("Deep Learning", round(auc(ann_roc), 4)), 
+                                 paste("XGBoost", round(auc(xgb_roc), 4)),
+                                 paste("Random Forest", round(auc(rf_roc), 4)), 
+                                 paste("GLMNet", round(auc(glmnet_roc), 4) )), 
+                          lty = c(1, 1, 1, 1), 
+                          col =c("#FB8072", "#80B1D3", "#B3DE69", "#FDB462"), cex=0.6, lwd=1.5, inset = 0.05,
+                                  title = "AUC")
+                          par(mfrow = c(1, 1))
+```
+
+
+```{r}
+require(caret)
+require(gridExtra)
+require(h2o)
+
+accuracy_table <- function(
+    test_data,
+    condition,
+    xgb_model ,
+    rf_model,
+    # svmRadialWeights_model,
+    glmnet_model,
+    h2o_model
+){
+  models <- list(
+    XGBoost = xgb_model,
+    Random_Forest = rf_model,
+    # svmRadialWeights_model = svmRadialWeights_model,
+    GLMNet = glmnet_model,
+    Deep_Learning = h2o_model
+  )
+  
+  accuracy_results <- data.frame(
+    Model = character(),
+    Accuracy = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  test_dat <- test_data[,colnames(test_data) != condition]
+  
+  for (model_name in names(models)) {
+    model <- models[[model_name]]
+    
+    # Check if the model is an H2O model
+    if (inherits(model, "H2OModel")) {
+      # Predict using H2O model
+      predictions <- as.factor(as.vector(h2o.predict(model, as.h2o(test_dat))$predict))
+    } else {
+      # Predict using non-H2O model
+      predictions <- predict(model, test_dat)
+    }
+    
+    # Calculate the confusion matrix and accuracy
+    confusion <- confusionMatrix(predictions, test_data[[condition]])
+    accuracy <- round(confusion$overall['Accuracy'], digits = 3)
+    
+    # Store the results in the data frame
+    accuracy_results <- rbind(accuracy_results, data.frame(
+      Model = model_name,
+      Accuracy = accuracy
+    ))
+    
+    rownames(accuracy_results) <- NULL
+  }
+  
+  
+  accuracy_results
+  
+  
+  
+}
+```
+
+
+# Test Data Set Accuracy Plot 
+
+```{r,fig.height= 5, fig.width=4}
+
+accuracy <- accuracy_table(
+  test_data = test,
+  condition = "meta.multiple.bin",
+    xgb_model = xgb_model ,
+    rf_model = rf_model,
+    # svmRadialWeights_model,
+    glmnet_model = glmnet_model,
+    h2o_model = ann_model_1
+  
+)
+
+palette <- c("#FB8072", "#80B1D3", "#B3DE69", "#FDB462")
+
+names(palette) <- c("Deep_Learning","XGBoost", "Random_Forest", "GLMNet" )
+
+
+library(ggpubr)
+p <- ggbarplot(accuracy, x = "Model", y = "Accuracy", width = 0.5, fill = "Model", color = "black",
+ label = TRUE, palette = palette, x.text.angle = 45)
+
+
+p + theme(legend.position = "none")
+
+
+```
+
+# Validation Data Set Accuracy Plot 
+
+
+```{r,fig.height= 5, fig.width=4}
+accuracy <- accuracy_table(
+  test_data = mel_dat,
+  condition = "meta.multiple.bin",
+    xgb_model = xgb_model ,
+    rf_model = rf_model,
+    # svmRadialWeights_model,
+    glmnet_model = glmnet_model,
+    h2o_model = ann_model_1
+  
+)
+
+palette <- c("#386CB0", "#E41A1C", "#7FC97F",  "#999999")
+
+names(palette) <- c("Deep_Learning","XGBoost", "Random_Forest", "GLMNet" )
+
+
+library(ggpubr)
+p <- ggbarplot(accuracy, x = "Model", y = "Accuracy", width = 0.5, fill = "Model", color = "black",
+ label = TRUE, palette = palette, x.text.angle = 45)
+
+p + theme(legend.position = "none")
+
+#  "#7FC97F" "#BEAED4" "#FDC086" "#FFFF99" "#386CB0" "#F0027F" "#BF5B17" "#666666"
+#  
+#  [1] "#A6CEE3" "#1F78B4" "#B2DF8A" "#33A02C" "#FB9A99" "#E31A1C" "#FDBF6F" "#FF7F00" "#CAB2D6" "#6A3D9A"
+# [11] "#FFFF99" "#B15928"
+# 
+#  
+#  "#E41A1C" "#377EB8" "#4DAF4A" "#984EA3" "#FF7F00" "#FFFF33" "#A65628" "#F781BF" "#999999"
+```
+
+
+
+
+
+
+# important gene extraction
+
+```{r}
+
+#xgboost
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+xgbImp_d$gene <- row.names(xgbImp_d)
+colnames(xgbImp_d)[colnames(xgbImp_d) == "Overall"] ="xgb_score"
+
+
+
+# random forest
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+rfImp_d <- rfImp_d  %>% filter(!Overall == 0)
+rfImp_d$gene <- rownames(rfImp_d)
+colnames(rfImp_d)[colnames(rfImp_d) == "Overall"] ="rf_score"
+# rfImp_d$rf_score <- signif(rfImp_d$rf_score, digits  = 8) 
+
+# glmnet
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+glmnetImp_d$gene <- rownames(glmnetImp_d)
+colnames(glmnetImp_d)[colnames(glmnetImp_d) == "Overall"] ="glmnet_score"
+
+# # svm
+# 
+# svmImp <- varImp(svmRadialWeights_model, scale = T)
+# svmImp_d <- data.frame(svmImp$importance)
+# svmImp_d <- svmImp_d %>% filter(!(High == 0 & Low == 0))
+
+# identical(svmImp_d$High, svmImp_d$Low)
+# [1] TRUE
+
+# svmImp_d$gene <- rownames(svmImp_d)
+# colnames(svmImp_d)[colnames(svmImp_d) == "High"] ="svm_score"
+# svmImp_d <- svmImp_d %>% select(gene, svm_score)
+
+# ann 
+
+ann_varimp_1 <- h2o.varimp(ann_model_1)
+ann_varimp_1_d <- as.data.frame(ann_varimp_1)
+# identical(ann_varimp_1_d$relative_mportance, ann_varimp_1_d$scaled_mportance)
+# [1] TRUE
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "variable"] ="gene"
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "scaled_mportance"] ="ann_score"
+ann_varimp_1_d <- ann_varimp_1_d %>% select(gene, ann_score)
+
+# diff expr.
+
+test_diff_genes$significance<- "NO"
+test_diff_genes$significance[test_diff_genes$padj < 0.05 & test_diff_genes$log2FoldChange > 1 ] <- "UP"
+test_diff_genes$significance[test_diff_genes$padj < 0.05 & test_diff_genes$log2FoldChange < -1 ] <- "DOWN"
+
+train_diff_genes$significance<- "NO"
+train_diff_genes$significance[train_diff_genes$padj < 0.05 & train_diff_genes$log2FoldChange > 1 ] <- "UP"
+train_diff_genes$significance[train_diff_genes$padj < 0.05 & train_diff_genes$log2FoldChange < -1 ] <- "DOWN"
+
+
+
+
+
+test_diff_genes <- test_diff_genes %>% 
+                   filter(significance != "NO") %>% 
+                   mutate(wlfc = -log2(padj)  * abs(log2FoldChange)) %>% 
+                   select(gene, wlfc, significance, padj, log2FoldChange)
+
+
+train_diff_genes <-train_diff_genes %>% 
+                   filter(significance != "NO") %>% 
+                   mutate(wlfc = -log2(padj)  * abs(log2FoldChange)) %>% 
+                   select(gene, wlfc, significance, padj, log2FoldChange)
+
+colnames(test_diff_genes) <- paste("test", colnames(test_diff_genes), sep = "_")
+colnames(train_diff_genes) <- paste("train", colnames(train_diff_genes), sep = "_")
+
+colnames(test_diff_genes)[colnames(test_diff_genes) == "test_gene"] ="gene"
+colnames(train_diff_genes)[colnames(train_diff_genes) == "train_gene"] ="gene"
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+# Upsetr Plot for Downregulated Genes
+
+
+```{r, fig.height=4, fig.width=8}
+
+test_d <- test_diff_genes[test_diff_genes$test_significance == "DOWN", ]
+train_d <- train_diff_genes[train_diff_genes$train_significance == "DOWN", ]
+
+
+common_gene_list<- list(
+  ann = ann_varimp_1_d$gene,
+  # svm = svmImp_d$gene,
+  xgb = xgbImp_d$gene,
+  glmnet = glmnetImp_d$gene,
+  train_diff_genes= test_d$gene,
+  test_diff_genes = train_d $gene,
+  rf = rfImp_d$gene
+)
+
+library(UpSetR)
+
+# upset(fromList(common_gene_list), order.by = "freq")
+
+common_elements <- Reduce(intersect, common_gene_list)
+
+upset(fromList(common_gene_list), 
+      nsets = 6, 
+      order.by = "freq", 
+      decreasing = T, 
+      mb.ratio = c(0.55,0.45),
+      number.angles = 0, 
+      text.scale = 1.3,
+      point.size = 2,
+      line.size = 1,
+      sets.bar.color = "red",
+      main.bar.color = "darkgrey",
+      mainbar.y.max = 2200,
+      mainbar.y.label = "Common Gene Number",
+      sets.x.label = "Important Gene Number"
+      )
+
+
+
+common_gene_list2 <- list(
+  # ann = ann_varimp_1_d$gene,
+  # svm = svmImp_d$gene,
+  xgb = xgbImp_d$gene,
+  glmnet = glmnetImp_d$gene,
+  train_diff_genes= test_d$gene,
+  test_diff_genes = train_d $gene,
+  rf = rfImp_d$gene
+)
+
+
+upset(fromList(common_gene_list2), 
+      nsets = 6, 
+      order.by = "freq", 
+      decreasing = T, 
+      mb.ratio = c(0.55,0.45),
+      number.angles = 0, 
+      text.scale = 1.3,
+      point.size = 2,
+      line.size = 1,
+      sets.bar.color = "red",
+      main.bar.color = "darkgrey",
+      mainbar.y.max = 2200,
+      mainbar.y.label = "Common Gene Number",
+      sets.x.label = "Important Gene Number"
+      )
+
+```
+
+# Upsetr plot for upregulated genes
+
+
+```{r, fig.height=4, fig.width=8}
+
+test_d <- test_diff_genes[test_diff_genes$test_significance == "UP", ]
+train_d <- train_diff_genes[train_diff_genes$train_significance == "UP", ]
+
+common_gene_list<- list(
+  ann = ann_varimp_1_d$gene,
+  # svm = svmImp_d$gene,
+  xgb = xgbImp_d$gene,
+  glmnet = glmnetImp_d$gene,
+  train_diff_genes= test_d$gene,
+  test_diff_genes = train_d $gene,
+  rf = rfImp_d$gene
+)
+
+library(UpSetR)
+
+# upset(fromList(common_gene_list), order.by = "freq")
+
+common_elements <- Reduce(intersect, common_gene_list)
+
+
+
+upset(fromList(common_gene_list), 
+      nsets = 6, 
+      order.by = "freq", 
+      decreasing = T, 
+      mb.ratio = c(0.55,0.45),
+      number.angles = 0, 
+      text.scale = 1.3,
+      point.size = 2,
+      line.size = 1,
+      sets.bar.color = "red",
+      main.bar.color = "darkgrey",
+      mainbar.y.max = 2200,
+      mainbar.y.label = "Common Gene Number",
+      sets.x.label = "Important Gene Number"
+      )
+
+
+common_gene_list2 <- list(
+  # ann = ann_varimp_1_d$gene,
+  # svm = svmImp_d$gene,
+  xgb = xgbImp_d$gene,
+  glmnet = glmnetImp_d$gene,
+  train_diff_genes= test_d$gene,
+  test_diff_genes = train_d $gene,
+  rf = rfImp_d$gene
+)
+
+
+upset(fromList(common_gene_list2), 
+      nsets = 6, 
+      order.by = "freq", 
+      decreasing = T, 
+      mb.ratio = c(0.55,0.45),
+      number.angles = 0, 
+      text.scale = 1.3,
+      point.size = 2,
+      line.size = 1,
+      sets.bar.color = "red",
+      main.bar.color = "darkgrey",
+      mainbar.y.max = 2200,
+      mainbar.y.label = "Common Gene Number",
+      sets.x.label = "Important Gene Number"
+      )
+
+
+
+# test_diff_genes <- select(test_diff_genes, -significance)
+# train_diff_genes <- select(train_diff_genes, -significance)
+
+
+```
+
+
+
+
+```{r}
+library(ggpubr)
+
+
+
+
+expression_plotter <- function(expression_data, 
+                               common_elements,
+                               x_var,
+                               x_tit
+                               ){
+plot_list <- list()
+
+for (i in 1:length(common_elements)) {
+  
+gene <-  common_elements[i] 
+
+p <- ggboxplot(expression_data, 
+               x = x_var, 
+               y = gene,
+               xlab = x_tit,
+               # color = "meta.multiple.bin", 
+               palette = "jco",
+               fill = x_var,
+               add = "jitter", 
+               shape = x_var)+ 
+               stat_compare_means(method = "t.test", label.y = max(expression_data[[gene]])*1.2)+
+               theme(legend.position = "none")
+
+plot_list[[i]] = p
+  
+  
+}
+
+plot_list
+
+}
+```
+
+
+# Box Plot for Common Elements  (Train Data Set was used )
+
+
+```{r,fig.height= 3.2, fig.width=4, eval=FALSE}
+plot_list <- expression_plotter(train, common_elements = common_elements, x_var = "meta.multiple.bin", x_tit = "Interferon Gamma Response")
+
+plot_list
+
+```
+
+# Box Plot for Common Elements  (Test Data Set was used )
+
+```{r,fig.height= 3.2, fig.width=4, eval=FALSE}
+plot_list <- expression_plotter(test, common_elements = common_elements, x_var = "meta.multiple.bin", x_tit = "Interferon Gamma Response")
+
+plot_list
+
+```
+
+# Box Plot for Up/Down Genes (Test Data Set was used )
+
+```{r,fig.height= 3.2, fig.width=4}
+gene_list = c("MS4A1", "CXCL10",  "PTPRN", "ADAM11", "EEF1A2", "WFDC1", "OCA2", "MAST1", "REEP6", "EFHD1"     
+, "PAEP",  "MGAT5B", "CASKIN1", "LGI3", "CTXN1", "BEGAIN", "UBAP1L", "TPBGL")
+
+
+plot_list <- expression_plotter(test, common_elements = gene_list, x_var = "meta.multiple.bin", x_tit = "Interferon Gamma Response")
+
+plot_list
+```
+
+# Box Plot for Up/Down Genes (Train Data Set was used )
+
+```{r,fig.height= 3.2, fig.width=4}
+gene_list = c("MS4A1", "CXCL10",  "PTPRN", "ADAM11", "EEF1A2", "WFDC1", "OCA2", "MAST1", "REEP6", "EFHD1"     
+, "PAEP",  "MGAT5B", "CASKIN1", "LGI3", "CTXN1", "BEGAIN", "UBAP1L", "TPBGL")
+
+
+plot_list <- expression_plotter(train, common_elements = gene_list, x_var = "meta.multiple.bin", x_tit = "Interferon Gamma Response")
+
+plot_list
+```
+
+
+
+
+```{r}
+#xgboost
+
+xgbImp <- varImp(xgb_model, scale = T)
+xgbImp_d <- data.frame(xgbImp$importance)
+# xgbImp_d <- xgbImp_d %>% filter(!Overall == 0)
+xgbImp_d$gene <- row.names(xgbImp_d)
+colnames(xgbImp_d)[colnames(xgbImp_d) == "Overall"] ="xgb_score"
+
+
+
+# random forest
+
+rfImp <- varImp(rf_model, scale = T)
+rfImp_d <- data.frame(rfImp$importance)
+# rfImp_d <- rfImp_d  %>% filter(!Overall == 0)
+rfImp_d$gene <- rownames(rfImp_d)
+colnames(rfImp_d)[colnames(rfImp_d) == "Overall"] ="rf_score"
+# rfImp_d$rf_score <- signif(rfImp_d$rf_score, digits  = 8) 
+
+# glmnet
+
+glmnetImp <- varImp(glmnet_model, scale = T)
+glmnetImp_d <- data.frame(glmnetImp$importance)
+# glmnetImp_d <- glmnetImp_d %>% filter(!Overall == 0)
+glmnetImp_d$gene <- rownames(glmnetImp_d)
+colnames(glmnetImp_d)[colnames(glmnetImp_d) == "Overall"] ="glmnet_score"
+
+# # svm
+# 
+# svmImp <- varImp(svmRadialWeights_model, scale = T)
+# svmImp_d <- data.frame(svmImp$importance)
+# svmImp_d <- svmImp_d %>% filter(!(High == 0 & Low == 0))
+
+# identical(svmImp_d$High, svmImp_d$Low)
+# [1] TRUE
+
+# svmImp_d$gene <- rownames(svmImp_d)
+# colnames(svmImp_d)[colnames(svmImp_d) == "High"] ="svm_score"
+# svmImp_d <- svmImp_d %>% select(gene, svm_score)
+
+# ann 
+
+ann_varimp_1 <- h2o.varimp(ann_model_1)
+ann_varimp_1_d <- as.data.frame(ann_varimp_1)
+# identical(ann_varimp_1_d$relative_mportance, ann_varimp_1_d$scaled_mportance)
+# [1] TRUE
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "variable"] ="gene"
+colnames(ann_varimp_1_d)[colnames(ann_varimp_1_d) == "scaled_mportance"] ="ann_score"
+ann_varimp_1_d <- ann_varimp_1_d %>% select(gene, ann_score)
+
+
+```
+
+
+# merging for distance
+
+```{r}
+
+v1 <- full_join(ann_varimp_1_d, rfImp_d, by= "gene") 
+v2 <- full_join(xgbImp_d,glmnetImp_d, by= "gene")
+v3 <- full_join(train_diff_genes,test_diff_genes, by= "gene")
+v4 <- full_join(v1,v2, by= "gene")
+v5 <- full_join(v3,v4, by= "gene")
+
+merged_genes <- v5
+
+rownames(merged_genes) <- merged_genes$gene
+
+```
+
+
+# common gene 
+
+```{r, eval=FALSE}
+
+common_data <- merged_genes %>% filter(gene %in% common_elements)
+
+library(openxlsx)
+
+write.xlsx(common_data, "common_table.xlsx")
+
+```
+
+
+```{r}
+
+merged_genes <- select(merged_genes, -train_significance, -train_padj, -train_log2FoldChange, -test_significance, -test_padj, -test_log2FoldChange )
+
+```
+
+
+
+
+# data prep for corr plots
+
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+# l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+# mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+```
+
+
+```{r, echo=FALSE, , message=FALSE}
+train_data <- l_tr
+
+library(purrr)
+means <- data.frame(av_exp = map_dbl(train_data , mean))
+means$gene <- rownames(means)
+
+merged_data <- full_join(merged_genes, means, by="gene")
+
+```
+
+
+
+
+
+
+
+# Correlation Plots
+
+
+
+
+
+## ann vs xgb
+
+```{r,fig.height= 3, fig.width=4}
+
+# "#A50026" "#D73027" "#F46D43" "#FDAE61" "#FEE090" "#FFFFBF" "#E0F3F8" "#ABD9E9" "#74ADD1" "#4575B4" "#313695"
+# 
+#  "#A6CEE3" "#1F78B4" "#B2DF8A" "#33A02C" "#FB9A99" "#E31A1C" "#FDBF6F" "#FF7F00" "#CAB2D6" "#6A3D9A"
+
+library(ggpubr)
+library(ggplot2)
+library(ggrepel)
+library(RColorBrewer)
+
+df <- merged_data
+
+label = c("ESPTI1", "CXCL10", "APOL3", "LILRB2", "OASL")
+
+p <- ggscatter(df, x = "ann_score", y = "xgb_score",
+               xlab = "ANN Score",
+               ylab = "XGBoost Score",
+               fill = "av_exp",
+               legend.position = "right",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21,
+               ) +
+  gradient_fill(c("#4575B4", "#FFFFBF", "#D73027"))+
+  # labs(title = "ANN vs XGBoost")+
+  theme(legend.position = "right")
+
+# Add labels to outliers
+# p + geom_text_repel(data = subset(df, ann_score > 0.68), aes(label = gene), vjust = -1, , color = "darkorange")
+
+p + geom_label_repel(data = subset(df, ann_score > 0.95 | xgb_score > 90), aes(label = gene),  color = "black", fontface = "bold", size = 3, vjust = 0.8)
+
+
+
+```
+
+## ann vs rf
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+p <- ggscatter(df, x = "ann_score", y = "rf_score", 
+               fill = "av_exp",
+               xlab = "ANN Score",
+               ylab = "Random Forest Score",
+               size = 3,
+               shape = 21,
+               add.params = list(width = 0.2, height = 0.2)) +
+  gradient_fill(c("#4575B4", "#FFFFBF", "#D73027"))+
+  # labs(title = "ann_score vs rf_score")+
+  theme(legend.position = "right")
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene),  color = "black", fontface = "bold", size = 3)
+
+
+# Add labels to outliers
+p + geom_label_repel(data = subset(df, rf_score > 25 | ann_score > 0.95), aes(label = gene),color = "black", fontface = "bold", size = 3, hjust = 0.75)
+
+```
+
+## ann vs glmnet
+
+```{r,fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "ann_score", y = "glmnet_score", 
+               fill = "av_exp",
+               xlab = "ANN Score",
+               ylab = "Glmnet Score",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027"))+
+  # labs(title = "ann_score vs glmnet_score")+
+  theme(legend.position = "right")
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene) , color = "black",fontface = "bold",size = 3)
+
+
+# Add labels to outliers
+  p + geom_label_repel(data = subset(df, glmnet_score > 70 | ann_score > 0.90), aes(label = gene) ,  color = "black", fontface = "bold", size = 3, hjust = 0.8)
+
+# p + geom_label_repel(data = subset(df, gene %in% label), aes(label = gene),  color = "black", fontface = "bold", size = 3)
+```
+
+## ann vs tr_padj
+
+#### 15 common genes were labeled 
+
+```{r, fig.height= 3, fig.width=4}
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+p <- ggscatter(df, y = "ann_score", x = "train_wlfc", 
+               fill = "av_exp",
+               ylab = "ANN Score",
+               xlab = "P-Val Normalized l2fc (Train) ",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027"))+
+  # labs(title = "ann_score vs glmnet_score")+
+  theme(legend.position = "right")
+
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene) , color = "darkorange",fontface = "bold", size = 4.5)
+
+p + geom_label_repel(data = subset(df, ann_score > 0.90 | train_wlfc > 1000) , aes(label = gene),  color = "black", fontface = "bold", size = 3, hjust = 0.8, vjust = 0.3)
+
+
+```
+
+## svm vs tr_padj
+
+#### 15 common genes were labeled 
+
+```{r, fig.height= 6, fig.width=8, eval=FALSE}
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "svm_score", y = "train_wlfc", 
+               color = "av_exp",
+               size = 2,
+               add.params = list(width = 0.2, height = 0.2)) +
+  scale_color_gradient(low="blue", high="red")  +
+  labs(title = "svm_score vs tr_wlp")+
+  theme(legend.position = "right")
+
+p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), vjust = -1.2, , color = "darkorange",fontface = "bold")
+
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), vjust = -1, , color = "darkorange")
+
+```
+
+## svm vs xgb
+
+```{r, fig.height= 6, fig.width=8, eval=FALSE}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "svm_score", y = "xgb_score", 
+               color = "av_exp",
+               legend.position = "right",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2)) +
+  scale_color_gradient(low="blue", high="red")  +
+  labs(title = "svm_score vs xgb_score")+
+  theme(legend.position = "right")
+
+p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), vjust = -1, , color = "darkorange",fontface = "bold")
+
+# p + geom_text_repel(data = subset(df, xgb_score > 10), aes(label = gene), vjust = -1, , color = "darkorange")
+
+```
+
+## svm vs ann
+
+```{r, fig.height= 6, fig.width=8, eval=FALSE}
+
+p <- ggscatter(df, x = "svm_score", y = "ann_score", 
+               color = "av_exp",
+               size = 2,
+               add.params = list(width = 0.2, height = 0.2)) +
+  scale_color_gradient(low="blue", high="red")  +
+  labs(title = "svm_score vs ann_score")+
+  theme(legend.position = "right")
+
+p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), vjust = -1, , color = "darkorange",fontface = "bold")
+
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), vjust = -1, , color = "darkorange")
+
+```
+
+## svm vs rf
+
+```{r, fig.height= 6, fig.width=8, eval=F}
+
+library(ggpubr)
+library(ggplot2)
+library(ggrepel)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "svm_score", y = "rf_score", 
+               color = "av_exp",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2)) +
+  scale_color_gradient(low="blue", high="red")  +
+  labs(title = "svm_score vs rf_score")+
+  theme(legend.position = "right")
+
+# Add labels to outliers
+# p + geom_text_repel(data = subset(df, rf_score > 70), aes(label = gene), vjust = -1, , color = "darkorange")
+
+p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), vjust = -1, , color = "darkorange",fontface = "bold")
+
+
+```
+
+## svm vs glmnet
+
+```{r, fig.height= 3, fig.width=4, eval=FALSE}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+
+p <- ggscatter(df, x = "svm_score", y = "glmnet_score", 
+               color = "av_exp",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2)) +
+  scale_color_gradient(low="blue", high="red")  +
+  labs(title = "svm_score vs glmnet_score")+
+  theme(legend.position = "right")
+
+p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), vjust = -1, , color = "darkorange",fontface = "bold")
+
+
+# Add labels to outliers
+# p + geom_text_repel(data = subset(df, glmnet_score > 60), aes(label = gene), vjust = -1, , color = "darkorange")
+
+```
+
+
+## xgb vs glmnet
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "xgb_score", y = "glmnet_score", 
+               fill = "av_exp",
+               xlab = "XGBoost Score",
+               ylab = "Glmnet Score",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027"))+
+  # labs(title = "xgb_score vs glmnet_score")+
+  theme(legend.position = "right")
+
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene), color = "black",fontface = "bold", size = 3)
+
+
+# Add labels to outliers
+p + geom_text_repel(data = subset(df, glmnet_score > 65 |xgb_score > 25), aes(label = gene), color = "black",fontface = "bold", size = 3)
+
+```
+
+## xgb vs rf
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "xgb_score", y = "rf_score", 
+               xlab = "XGBoost Score",
+               ylab = "Random Forest",
+               fill = "av_exp",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027")) +
+  # labs(title = "xgb_score vs rf_score")+
+  theme(legend.position = "right")
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene) , color = "black",fontface = "bold", size = 3)
+
+
+# Add labels to outliers
+p + geom_label_repel(data = subset(df, rf_score > 25 |xgb_score > 25), aes(label = gene), color = "black",fontface = "bold", size = 3, hjust = 0.75)
+
+```
+
+## tr_padj vs xgb_score
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, y = "xgb_score", x = "train_wlfc", 
+               fill = "av_exp",
+               ylab = "XGBoost Score",
+               xlab = "P-Val Normalized l2fc (Train) ",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027")) +
+  # labs(title = "xgb_score vs rf_score")+
+  theme(legend.position = "right")
+
+p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene) , color = "black",fontface = "bold",size = 3, vjust = 1)
+
+
+# Add labels to outliers
+# p + geom_text_repel(data = subset(df, xgb_score > 75 |tr_wlp > 1800), aes(label = gene), vjust = -1, , color = "darkorange")
+
+```
+
+## tr_padj vs glmnet_score
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, y = "glmnet_score", x = "train_wlfc", 
+               ylab = "Glmnet Score",
+               xlab = "P-Val Normalized l2fc (Train) ",
+               fill = "av_exp",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027")) +
+  # labs(title = "tr_wlp vs glmnet_score")+
+  theme(legend.position = "right")
+
+# p + geom_label_repel(data = subset(df, gene %in% label), aes(label = gene), color = "black",fontface = "bold",size = 3)
+
+
+# Add labels to outliers
+p + geom_label_repel(data = subset(df, glmnet_score > 50 |train_wlfc > 1100), aes(label = gene), color = "black",fontface = "bold",size = 3)
+
+```
+
+## tr_padj vs rf_score
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, y = "rf_score", x = "train_wlfc", 
+               fill = "av_exp",
+               ylab = "Random Forest Score",
+               xlab = "P-Val Normalized l2fc (Train) ",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027")) +
+  # labs(title = "tr_wlp vs rf_score")+
+  theme(legend.position = "right")
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene)  , color = "black",fontface = "bold",size = 3, vjust = 1)
+
+
+# Add labels to outliers
+p + geom_text_repel(data = subset(df, rf_score > 25 |train_wlfc > 1100 ), aes(label = gene),, color = "black",fontface = "bold",size = 3, vjust = 1)
+
+```
+
+
+## glmnet_score vs rf_score
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "glmnet_score", y = "rf_score", 
+               xlab = "Glmnet Score",
+               ylab = "Random Forest Score ",
+               fill = "av_exp",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027")) +
+  # labs(title = "tr_wlp vs rf_score")+
+  theme(legend.position = "right")
+
+# p + geom_text_repel(data = subset(df, gene %in% label), aes(label = gene) , color = "black",fontface = "bold",size = 3, vjust = 1.5)
+
+
+# Add labels to outliers
+p + geom_text_repel(data = subset(df, glmnet_score > 80 |rf_score > 25), aes(label = gene), color = "black",fontface = "bold",size = 3, vjust = 1)
+
+```
+
+# te_wlp vs tr_wlp
+
+```{r, fig.height= 3, fig.width=4}
+
+library(ggpubr)
+library(ggplot2)
+
+df <- merged_data
+
+p <- ggscatter(df, x = "train_wlfc", y = "test_wlfc", 
+               ylab = "P-Val Normalized l2fc (Test)",
+               xlab = "P-Val Normalized l2fc (Train) ",
+               fill = "av_exp",
+               size = 3,
+               add.params = list(width = 0.2, height = 0.2),
+               shape = 21
+               
+               ) +
+ gradient_fill(c("#4575B4", "#FFFFBF", "#D73027")) +
+  theme(legend.position = "right")
+
+
+# p + geom_label_repel(data = subset(df, gene %in% label), aes(label = gene) , color = "black",fontface = "bold",size = 3)
+
+
+# Add labels to outliers
+p + geom_label_repel(data = subset(df, test_wlfc > 500 |train_wlfc > 1100), aes(label = gene)  , color = "black",fontface = "bold",size = 3)
+
+```
+
+```{r, eval=F}
+v1 <- full_join(xgbImp_d,glmnetImp_d, by= "gene")
+v2 <- full_join(train_diff_genes,test_diff_genes, by= "gene")
+v3 <- full_join(v1,v2, by= "gene")
+v4 <- full_join(rfImp_d,ann_varimp_1_d, by= "gene")
+v5 <- full_join(v3,v4, by= "gene")
+
+merged_genes <- v5
+
+rownames(merged_genes) <- merged_genes$gene
+
+merged_genes_scaled <- merged_genes %>% na.omit(merged_genes)
+
+merged_genes_scaled  <- select(merged_genes_scaled, -gene)
+
+```
+
+
+```{r}
+merged_genes_scaled <- merged_genes %>% na.omit(merged_genes)
+
+merged_genes_scaled  <- select(merged_genes_scaled, -gene)
+```
+
+
+
+# Canberra Distance Matrix
+
+```{r,fig.height= 4, fig.width=5.5}
+library(pheatmap)
+library(RColorBrewer)
+library("FactoMineR")
+library("devtools")
+library("factoextra")
+library(cluster)
+
+distance_matrix_scaled <- as.matrix(get_dist(t(merged_genes_scaled), method = "canberra")) 
+
+
+pheatmap(distance_matrix_scaled,
+         main = "             Canberra Distance Matrix of Common Variables",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+
+         color = rev(brewer.pal(n= 9, "RdYlBu"))
+)
+```
+
+
+# Kendall Distance Matrix 
+
+```{r,fig.height= 4, fig.width=5.5}
+w_mat <- cor(merged_genes_scaled, method = 'kendall')
+
+pheatmap(w_mat,
+         main = "Kendall Matrix of Common Variables",
+         # display_numbers = TRUE, 
+         # fontsize_number = 10, 
+         # annotation_col = alg_col,
+         # annotation_row = alg_col,
+         color = rev(brewer.pal(n= 9, "RdBu"))
+)
+```
+
+```{r}
+
+library(dplyr)
+
+# file reading
+tr_dif <- readRDS("TCGA_SKCM_train_de_genes_IFNG_final.rds") 
+te_dif <- readRDS("TCGA_SKCM_test_de_genes_IFNG_final.rds")  
+
+# removal of outlier genes
+
+# tr_dif <- filter(tr_dif, ! is.na(padj))
+# 
+# te_dif <- filter(te_dif, ! is.na(padj))
+
+
+```
+
+
+# volcano plot for train data set
+
+```{r, ,fig.height= 4, fig.width=5.5}
+library(ggplot2)
+library(ggrepel)
+
+tr_dif$significance<- "NO"
+tr_dif$significance[tr_dif$padj < 0.05 & tr_dif$log2FoldChange > 1 ] <- "UP"
+tr_dif$significance[tr_dif$padj < 0.05 & tr_dif$log2FoldChange < -1 ] <- "DOWN"
+
+label = common_elements
+
+colors <- c("#bb190a", "#396ced", "#dce7e7")
+
+names(colors) <- c("UP", "DOWN", "NO")
+
+p <- ggplot(data=tr_dif, aes(x=log2FoldChange, y=-log10(padj), color = significance)) + 
+  geom_point(size = 2,alpha = 0.2) + 
+  theme_minimal()+
+  scale_colour_manual(values = colors)+
+  geom_hline(yintercept = -log10(0.05), color = "#b2bdbd")+
+  geom_vline(xintercept = c(-1, 1), color = "#b2bdbd")+
+  geom_text_repel(data =tr_dif %>% filter(tr_dif$gene %in% label),
+            aes(label = gene),
+            # vjust = -1,
+            fontface = "bold",
+            color = "black",
+            size = 2.5)
+
+p
+
+
+```
+
+# volcano plot for test data set
+
+```{r, ,fig.height= 4, fig.width=5.5}
+library(ggplot2)
+
+te_dif$significance<- "NO"
+te_dif$significance[te_dif$padj < 0.05 & te_dif$log2FoldChange > 1 ] <- "UP"
+te_dif$significance[te_dif$padj < 0.05 & te_dif$log2FoldChange < -1 ] <- "DOWN"
+
+# label = common_elements
+
+colors <- c("#bb190a", "#396ced", "#dce7e7")
+
+names(colors) <- c("UP", "DOWN", "NO")
+
+p <- ggplot(data=te_dif, aes(x=log2FoldChange, y=-log10(padj), color = significance)) + 
+  geom_point(size = 2,alpha = 0.2) + 
+  theme_minimal()+
+  scale_colour_manual(values = colors)+
+  geom_hline(yintercept = -log10(0.05), color = "#b2bdbd")+
+  geom_vline(xintercept = c(-1, 1), color = "#b2bdbd")+
+  geom_text_repel(data =te_dif %>% filter(tr_dif$gene %in% label),
+            aes(label = gene),
+            # vjust = -1,
+            fontface = "bold",
+            color = "black",
+            size = 2.5)
+
+
+p
+
+
+```

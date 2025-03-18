@@ -1,0 +1,691 @@
+---
+title: "Overfitting Analysis 2"
+author: Arda Askin
+date: "`r Sys.Date()`"   
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: hide
+    theme: sandstone
+--- 
+```{r}
+suppressPackageStartupMessages(library("FactoMineR"))
+suppressPackageStartupMessages(library("devtools"))
+suppressPackageStartupMessages(library("factoextra"))
+suppressPackageStartupMessages(library(cluster) )
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(doParallel))
+suppressPackageStartupMessages(library(edgeR))
+suppressPackageStartupMessages(library(limma))
+```
+
+```{r}
+tcga_skcm <- readRDS("tcga_skcm.rds")
+# colnames(tcga_skcm) <- paste0("g.", colnames(tcga_skcm))
+
+mel_dat <- readRDS("validation_lcpm.rds")
+# val_dat <- readRDS("validation_lcpm_GSE98394.rds")
+
+tcga_skcm <- tcga_skcm %>% select(intersect(colnames(tcga_skcm), colnames(mel_dat)))
+mel_dat <- mel_dat %>% select(intersect(colnames(tcga_skcm), colnames(mel_dat)))
+
+
+
+```
+
+
+
+# EXTERNAL MELANOMA DATA CLASSIFICATION
+
+```{r}
+library(dplyr)
+
+# IFNG classification
+
+library(msigdbr)
+
+infg_gene_sets = msigdbr(species = "human", category = "H")
+
+infg_gene_sets = infg_gene_sets %>%  filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+sum(duplicated(infg_gene_sets$gene_symbol))
+
+infg_gene_sets = infg_gene_sets[!duplicated(infg_gene_sets$gene_symbol), ]
+
+infg_gene_set = infg_gene_sets$gene_symbol
+
+infg_gene_set <- gsub("\\-| ", ".", infg_gene_set)
+
+infg_gene_set <- paste0("g.", infg_gene_set)
+
+sum(infg_gene_set %in% colnames(mel_dat))  
+
+infg_gene_set = intersect(infg_gene_set, colnames(mel_dat))
+
+mel_dat <- mel_dat %>% mutate(
+  meta.multiple.gene = rowMeans(mel_dat[,infg_gene_set])
+) 
+
+
+
+mel_dat <- mel_dat %>% 
+  mutate(
+    meta.multiple.bin = case_when(
+      mel_dat$meta.multiple.gene > median(mel_dat$meta.multiple.gene) ~ "High",
+      mel_dat$meta.multiple.gene <= median(mel_dat$meta.multiple.gene) ~ "Low",
+    )
+  )
+
+mel_dat <- mel_dat %>% select(-meta.multiple.gene)
+
+mel_dat$meta.multiple.bin <- as.factor(mel_dat$meta.multiple.bin)
+
+# saveRDS(mel_dat, "external_data.rds")
+
+
+# val_dat <- val_dat %>% mutate(
+#   meta.multiple.gene = rowMeans(val_dat[,infg_gene_set])
+# ) 
+# 
+# val_dat <- val_dat %>% 
+#   mutate(
+#     meta.multiple.bin = case_when(
+#       val_dat$meta.multiple.gene > median(val_dat$meta.multiple.gene) ~ "High",
+#       val_dat$meta.multiple.gene <= median(val_dat$meta.multiple.gene) ~ "Low",
+#     )
+#   )
+# 
+# 
+# val_dat$meta.multiple.bin <- as.factor(val_dat$meta.multiple.bin)
+
+```
+
+
+
+
+```{r}
+l_te_3 <- mel_dat %>% select(-starts_with("meta."))
+
+pca_result_3 <- prcomp(l_te_3 , scale. = TRUE, center = T)
+
+p3 <- fviz_pca_ind(pca_result_3, col.ind = as.factor(val_dat$meta.multiple.bin), geom = "point", title = "PCA for vst normalized external test data 2")
+
+p3
+```
+
+
+
+# TCGA Prep
+
+```{r}
+
+
+tcga_skcm <- tcga_skcm %>% select(-starts_with("meta."))
+
+imn_data <- tcga_skcm
+
+
+
+dge <- DGEList(counts=t(imn_data))
+
+l_dat <- cpm(dge, log=T, prior.count = 1)
+
+l_dat <- as.data.frame(t(l_dat))
+
+l_dat <- l_dat %>% mutate(
+  meta.multiple.gene = rowMeans(l_dat[,infg_gene_set])
+) 
+
+
+
+l_dat <- l_dat %>% 
+  mutate(
+    meta.multiple.bin = case_when(
+      l_dat$meta.multiple.gene > median(l_dat$meta.multiple.gene) ~ "High",
+      l_dat$meta.multiple.gene <= median(l_dat$meta.multiple.gene) ~ "Low",
+    )
+  )
+
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+# saveRDS(l_dat, "lcpm_tcga_skcm.rds")
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+
+```
+
+
+
+
+
+# Ready Data Reading
+
+```{r}
+mel_dat <- readRDS("validation_lcpm.rds")
+
+```
+
+```{r}
+
+l_dat <- readRDS("skcm_ready.RDS")
+
+l_dat$meta.multiple.bin <- as.factor(l_dat$meta.multiple.bin)
+
+l_dat <- l_dat %>% select(-meta.multiple.gene)
+
+l_dat <- l_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+
+library(caret)
+
+set.seed(3456)
+
+trainIndex <- createDataPartition(l_dat$meta.multiple.bin, p = .7, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- l_dat[ trainIndex,]
+
+test <- l_dat[-trainIndex,]
+
+summary(train$meta.multiple.bin)
+
+summary(test$meta.multiple.bin)
+
+
+l_tr <- train %>% select(-starts_with("meta."))
+l_te <- test %>% select(-starts_with("meta."))
+
+```
+## PCA Plot for validation set
+
+```{r}
+
+mel_dat <- mel_dat %>% select(intersect(colnames(l_dat), colnames(mel_dat)))
+
+l_te_2 <- mel_dat %>% select(-starts_with("meta."))
+
+pca_result_2 <- prcomp(l_te_2 , scale. = TRUE, center = T)
+
+p2 <- fviz_pca_ind(pca_result_2, col.ind = as.factor(mel_dat$meta.multiple.bin), geom = "point", title = "PCA for vst normalized external test data")
+
+p2
+
+```
+
+
+
+
+# xgb model training with lcpm normalized data
+
+```{r, eval=F, echo=FALSE}
+suppressPackageStartupMessages(library(doParallel))
+
+n_cores <- detectCores()
+n_cores
+
+# Register cluster
+cluster <- makeCluster(n_cores - 1)
+registerDoParallel(cluster)
+
+
+
+control <- trainControl(method='repeatedcv', 
+                        number=10, 
+                        # repeats=3, ## it can be used when performance is poor 
+                        search = 'random',
+                        savePredictions = TRUE, 
+                        classProbs = TRUE, 
+                        verboseIter = TRUE)
+
+
+set.seed(50)
+
+xgb_model = train(x = l_tr, 
+              y = train$meta.multiple.bin, 
+              method = "xgbTree", 
+              trControl = control)
+
+saveRDS(xgb_model, "xgb_valid_final.RDS")
+
+
+```
+
+```{r}
+xgb_model <- readRDS("xgb_valid_final.RDS")
+```
+
+
+
+## AUC plot for Original Train Set 
+
+
+```{r}
+library(pROC)
+
+xgb_roca <- roc(train$meta.multiple.bin, 
+            predict(xgb_model, l_tr, type = "prob")[,1], 
+            levels = rev(levels(train$meta.multiple.bin)))
+plot(xgb_roca, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Train Set")
+
+xgb_predicted2 = predict(xgb_model, l_tr)
+
+confusionMatrix(xgb_predicted2, train$meta.multiple.bin)
+
+```
+
+## Matricies for original test set 
+
+```{r}
+
+xgb_roc1 <- roc(test$meta.multiple.bin, 
+            predict(xgb_model, l_te, type = "prob")[,1], 
+            levels = rev(levels(test$meta.multiple.bin)))
+
+plot(xgb_roc1, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Test Set")
+
+xgb_predicted2 = predict(xgb_model, l_te)
+
+confusionMatrix(xgb_predicted2, test$meta.multiple.bin)
+
+```
+
+
+
+## Matricies for validation data set
+
+
+```{r}
+
+xgb_roc2 <- roc(mel_dat$meta.multiple.bin, 
+            predict(xgb_model, l_te_2, type = "prob")[,1], 
+            levels = rev(levels(mel_dat$meta.multiple.bin)))
+
+plot(xgb_roc2, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+xgb_predicted = predict(xgb_model, l_te_2)
+
+confusionMatrix(xgb_predicted, mel_dat$meta.multiple.bin)
+
+```
+## matricies for other validation test set
+
+```{r}
+xgb_roc2 <- roc(val_dat$meta.multiple.bin, 
+            predict(xgb_model, l_te_3, type = "prob")[,1], 
+            levels = rev(levels(val_dat$meta.multiple.bin)))
+
+plot(xgb_roc2, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+xgb_predicted = predict(xgb_model, l_te_3)
+
+confusionMatrix(xgb_predicted, val_dat$meta.multiple.bin)
+```
+
+
+
+# svm model training with lcpm normalized data
+
+```{r, echo=FALSE, eval=FALSE}
+
+set.seed(50)
+svmRadialWeights_model <- train(x = l_tr, 
+              y = train$meta.multiple.bin, 
+                   method = 'svmRadialWeights',
+                   metric = 'Accuracy',
+                   tuneLength  = 15, # it causes slow process and it can be used when the performance is poor
+                   trControl = control)
+
+saveRDS(svmRadialWeights_model,"svm_valid.rds")
+
+
+```
+
+```{r}
+svmRadialWeights_model <- readRDS("svm_valid.rds")
+
+```
+
+
+## Matricies for trait set
+
+```{r}
+
+xgb_roc1 <- roc(train$meta.multiple.bin, 
+            predict(svmRadialWeights_model, l_tr, type = "prob")[,1], 
+            levels = rev(levels(train$meta.multiple.bin)))
+
+plot(xgb_roc1, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Test Set")
+
+svmRadialWeights_model_predicted2 = predict(svmRadialWeights_model, l_tr)
+
+confusionMatrix(svmRadialWeights_model_predicted2, train$meta.multiple.bin)
+
+```
+
+## Matricies for original test set
+
+```{r}
+
+svmRadialWeights_roc <- roc(test$meta.multiple.bin, 
+            predict(svmRadialWeights_model, l_te, type = "prob")[,1], 
+            levels = rev(levels(test$meta.multiple.bin)))
+
+plot(svmRadialWeights_roc, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Test Set")
+
+svmRadialWeights_model_predicted = predict(svmRadialWeights_model, l_te)
+
+confusionMatrix(svmRadialWeights_model_predicted, test$meta.multiple.bin)
+
+```
+## Matricies for validation data set
+
+
+```{r}
+
+
+svmRadialWeights_model_roc <- roc(mel_dat$meta.multiple.bin, 
+            predict(svmRadialWeights_model, l_te_2, type = "prob")[,1], 
+            levels = rev(levels(mel_dat$meta.multiple.bin)))
+
+plot(svmRadialWeights_model_roc, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+svm_predicted = predict(svmRadialWeights_model, l_te_2)
+
+confusionMatrix(svm_predicted, mel_dat$meta.multiple.bin)
+
+```
+
+# rf model training with lcpm normalized data
+
+```{r, echo=FALSE, eval=FALSE}
+set.seed(50)
+rf_model <- train(x = l_tr, 
+              y = train$meta.multiple.bin,  
+                   method = 'rf',
+                   metric = 'Accuracy',
+                   tuneLength  = 15, 
+                   trControl = control)
+
+saveRDS(rf_model, "rf_valid_final.RDS")
+
+```
+
+```{r}
+rf_model <- readRDS("rf_valid_final.RDS")
+```
+
+
+## AUC plot for Original Train Set 
+
+
+```{r}
+library(pROC)
+
+rf_roca <- roc(train$meta.multiple.bin, 
+            predict(rf_model, l_tr, type = "prob")[,1], 
+            levels = rev(levels(train$meta.multiple.bin)))
+plot(rf_roca, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Train Set")
+
+rf_predicted2 = predict(rf_model, l_tr)
+
+confusionMatrix(rf_predicted2, train$meta.multiple.bin)
+
+```
+
+## Matricies for original test set 
+
+```{r}
+
+rf_roc1 <- roc(test$meta.multiple.bin, 
+            predict(rf_model, l_te, type = "prob")[,1], 
+            levels = rev(levels(test$meta.multiple.bin)))
+
+plot(rf_roc1, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Test Set")
+
+svmRadialWeights_model_predicted2 = predict(rf_model, l_te)
+
+confusionMatrix(svmRadialWeights_model_predicted2, test$meta.multiple.bin)
+
+```
+
+## Matricies validation test set 
+
+```{r}
+
+rf_roc2 <- roc(mel_dat$meta.multiple.bin, 
+            predict(rf_model, l_te_2, type = "prob")[,1], 
+            levels = rev(levels(mel_dat$meta.multiple.bin)))
+
+plot(rf_roc2, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+rf_model_predicted = predict(rf_model, l_te_2)
+
+confusionMatrix(rf_model_predicted, mel_dat$meta.multiple.bin)
+
+```
+
+# glmnet model training with lcpm normalized data
+
+```{r, echo=FALSE, eval=FALSE}
+set.seed(50)
+glmnet_model <- train(x = l_tr, 
+              y = train$meta.multiple.bin,  
+                   method = 'glmnet',
+                   metric = 'Accuracy',
+                   family = "binomial",
+                   # tuneLength  = 15,
+                   trControl = control)
+
+saveRDS(glmnet_model, "glmnet_valid_final.RDS")
+
+```
+
+
+```{r}
+glmnet_model <- readRDS("glmnet_valid.RDS")
+```
+
+## AUC plot for Original Train Set 
+
+```{r}
+library(pROC)
+
+glmnet_roca <- roc(train$meta.multiple.bin, 
+            predict(glmnet_model, l_tr, type = "prob")[,1], 
+            levels = rev(levels(train$meta.multiple.bin)))
+plot(glmnet_roca, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Train Set")
+
+glmnet_predicted2 = predict(glmnet_model, l_tr)
+
+confusionMatrix(glmnet_predicted2, train$meta.multiple.bin)
+
+```
+
+## Matricies for original test set 
+
+```{r}
+
+glmnet_roc1 <- roc(test$meta.multiple.bin, 
+            predict(glmnet_model, l_te, type = "prob")[,1], 
+            levels = rev(levels(test$meta.multiple.bin)))
+
+plot(glmnet_roc1, print.auc=TRUE, 
+     legacy.axes = TRUE, title = "AUC Plot for Original Test Set")
+
+glmnet_model_predicted2 = predict(glmnet_model, l_te)
+
+confusionMatrix(glmnet_model_predicted2, test$meta.multiple.bin)
+
+```
+
+## Matricies validation test set 
+
+```{r}
+
+glmnet_roc2 <- roc(mel_dat$meta.multiple.bin, 
+            predict(glmnet_model, l_te_2, type = "prob")[,1], 
+            levels = rev(levels(mel_dat$meta.multiple.bin)))
+
+plot(glmnet_roc2, print.auc=TRUE, 
+     legacy.axes = TRUE)
+
+glmnet_model_predicted = predict(glmnet_model, l_te_2)
+
+confusionMatrix(glmnet_model_predicted, mel_dat$meta.multiple.bin)
+
+```
+
+
+
+
+# ANN Model
+
+```{r}
+library(h2o)
+
+h2o.init(nthreads = -1) 
+
+train.hex <- as.h2o(train)
+test.hex <- as.h2o(test)
+
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+hyper_params <- list(
+                     activation = c("Rectifier", "Maxout", "Tanh", "RectifierWithDropout", "MaxoutWithDropout", "TanhWithDropout"), 
+                     hidden = list(c(5, 5, 5, 5, 5), c(10, 10, 10, 10), c(50, 50, 50), c(100, 100, 100)),
+                     epochs = c(50, 100, 200),
+                     l1 = c(0, 0.00001, 0.0001), 
+                     l2 = c(0, 0.00001, 0.0001),
+                     rate = c(0, 01, 0.005, 0.001),
+                     rate_annealing = c(1e-8, 1e-7, 1e-6),
+                     rho = c(0.9, 0.95, 0.99, 0.999),
+                     epsilon = c(1e-10, 1e-8, 1e-6, 1e-4),
+                     momentum_start = c(0, 0.5),
+                     momentum_stable = c(0.99, 0.5, 0),
+                     input_dropout_ratio = c(0, 0.1, 0.2),
+                     max_w2 = c(10, 100, 1000, 3.4028235e+38)
+                     )
+
+
+
+search_criteria <- list(strategy = "RandomDiscrete", 
+                        max_models = 100,
+                        max_runtime_secs = 900,
+                        stopping_tolerance = 0.001,
+                        stopping_rounds = 15,
+                        seed = 42)
+
+ y = grep("meta.multiple.bin", colnames(test))
+  
+ x = 1:(y-1)
+ 
+ dl_grid <- h2o.grid(algorithm = "deeplearning", 
+                    x = x,
+                    y = y,
+                    grid_id = "dl_grid",
+                    training_frame = train.hex,
+                    validation_frame = test.hex,
+                    nfolds = 10,
+                    fold_assignment = "Stratified",
+                    hyper_params = hyper_params,
+                    search_criteria = search_criteria,
+                    seed = 42
+                    ,keep_cross_validation_predictions=TRUE
+                    ,keep_cross_validation_fold_assignment=TRUE
+                    ,variable_importances = T
+                    )
+ 
+ gridperf2 <- h2o.getGrid(grid_id = "dl_grid",
+                             sort_by = "auc",
+                             decreasing = TRUE)
+
+best_ann <- h2o.getModel(gridperf2@model_ids[[1]])
+
+h2o.saveModel(best_ann,"ann_valid_final.RDS")
+ 
+ 
+```
+
+
+```{r}
+
+best_ann <- h2o.loadModel("F:\\ML_Performance\\Models\\TCGA_SKCM_model\\ann_valid.RDS\\dl_grid_model_4")
+
+
+```
+
+
+## Matricies for original test
+
+```{r}
+
+perf2 <- h2o.performance(best_ann, valid = TRUE)
+
+h2o.auc(best_ann, valid = T)
+ 
+plot(perf2, type = "roc")
+
+# a <-as.data.frame(predict(best_ann, test.hex))
+#   
+# table(a$predict, test$meta.multiple.bin)
+
+h2o.confusionMatrix(best_ann, test.hex)
+
+```
+
+## matricies for validation test set 
+
+```{r}
+
+test2.hex <- as.h2o(mel_dat)
+
+# a <-as.data.frame(predict(best_ann, test2.hex))
+#   
+# table(a$predict, mel_dat$meta.multiple.bin)
+
+h2o.confusionMatrix(best_ann, test2.hex)
+
+```
+
+
+
